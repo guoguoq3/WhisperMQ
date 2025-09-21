@@ -37,16 +37,16 @@ public class MqBroker {
 
 
    private final MqBrokerHandler mqBrokerHandler;
-   private final OffsetPersistUtil offsetPersistUtil;
+//   private final OffsetPersistUtil offsetPersistUtil;
 
 
     // 构造器注入配置
     @Autowired
-    public MqBroker(MqConfigProperties config, MqBrokerHandler mqBrokerHandler,FilePersistUtil filePersistUtil,BrokerManager brokerManager, OffsetPersistUtil offsetPersistUtil) {
+    public MqBroker(MqConfigProperties config, MqBrokerHandler mqBrokerHandler,BrokerManager brokerManager, FilePersistUtil filePersistUtil) {
         this.config = config;
         this.mqBrokerHandler=mqBrokerHandler;
         this.filePersistUtil=filePersistUtil;
-        this.offsetPersistUtil=offsetPersistUtil;
+//        this.offsetPersistUtil=offsetPersistUtil;
 
     }
 
@@ -94,7 +94,7 @@ public class MqBroker {
     public void stop() {
         if (bossGroup != null) bossGroup.shutdownGracefully();
         if (workerGroup != null) workerGroup.shutdownGracefully();
-        offsetPersistUtil.close();
+//        offsetPersistUtil.close();
         log.info("Broker 已关闭");
     }
 }
