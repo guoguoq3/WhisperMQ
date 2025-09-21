@@ -1,10 +1,12 @@
 package org.guoguo.broker.util;
 
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.guoguo.broker.ConsumerGroup.ConsumerGroupManager;
 import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.pojo.Entity.ConsumerGroup;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -18,10 +20,9 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -48,27 +49,139 @@ public class OffsetPersistUtil {
     // 每个消费者组的文件映射（避免重复创建流）
     private final Map<String, File> groupFileMap = new ConcurrentHashMap<>();
 
+    //引入一个计数器 当在十秒内 计数器的值大于100 则开始定时执行flush 若十秒钟内峰值小于100 则停止定时任务
+    // 用于控制flush任务的Future对象
+    private ScheduledFuture<?> flushTaskFuture;
+
+    // 确保任务启停的线程安全
+    private final ReentrantLock taskLock = new ReentrantLock();
+    // 单个线程池管理所有任务，避免频繁创建销毁
+    private final ScheduledExecutorService scheduler;
+    private final Map<String, Object> groupLocks=new ConcurrentHashMap<>();
+    private final AtomicLong writeCount = new AtomicLong(0); // 写入计数器
+    private volatile boolean isFlushTaskRunning = false; // 标记定时任务是否正在运行
 
     @Autowired
     public OffsetPersistUtil(MqConfigProperties mqConfigProperties) {
         this.mqConfigProperties = mqConfigProperties;
-        // 启动定时任务，定期执行flush
-        //定时刷新消息到文件中 不然一条一刷会大量io操作
-        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
-        scheduler.scheduleAtFixedRate(() -> {
-            try {
-                for (Map.Entry<String, BufferedWriter> entry : groupWriterMap.entrySet()) {
-                    String groupId = entry.getKey();
-                    BufferedWriter writer = entry.getValue();
-                    writer.flush();
-                    log.info("消费者组[{}]flush完成", groupId);
-                }
-                log.info("定时批量flush完成");
-            } catch (Exception e) {
-                log.error("定时批量flush失败", e);
-            }
-        }, mqConfigProperties.getFlushIntervalMillis(), mqConfigProperties.getFlushIntervalMillis(), TimeUnit.MILLISECONDS);
 
+
+
+        // 初始化线程池并指定有意义的线程名
+        this.scheduler = Executors.newScheduledThreadPool(2, r -> {
+            Thread thread = new Thread(r, "offset-persist-thread");
+            thread.setDaemon(true);
+            return thread;
+        });
+
+        // 启动监控任务
+        scheduler.scheduleAtFixedRate(this::monitorWriteCount,
+                0,
+                mqConfigProperties.getWindowSizeMillis(),
+                TimeUnit.MILLISECONDS);    }
+    /**
+     * 监控写入计数器并动态调整定时任务
+     */
+    private void monitorWriteCount() {
+        try {
+            long currentWriteCount = writeCount.getAndSet(0);
+            log.debug("当前窗口写入量: {}, 阈值: {}", currentWriteCount, mqConfigProperties.getFlushThreshold());
+
+            if (currentWriteCount >= mqConfigProperties.getFlushThreshold() && !isFlushTaskRunning) {
+                log.info("写入量超过阈值（{}），启动定时flush任务", mqConfigProperties.getFlushThreshold());
+                startFlushTask();
+            } else if (currentWriteCount < mqConfigProperties.getFlushThreshold() && isFlushTaskRunning) {
+                log.info("写入量低于阈值（{}），停止定时flush任务", mqConfigProperties.getFlushThreshold());
+                stopFlushTask();
+            }
+        } catch (Exception e) {
+            log.error("监控写入计数器失败", e);
+        }
+    }
+
+    /**
+     * 启动定时flush任务
+     */
+    private void startFlushTask() {
+        taskLock.lock();
+        try {
+            if (!isFlushTaskRunning) {
+                // 提交flush任务并保存Future引用
+                flushTaskFuture = scheduler.scheduleAtFixedRate(
+                        this::batchFlush,
+                        0,
+                        mqConfigProperties.getFlushIntervalMillis(),  // 使用单独的刷新间隔配置
+                        TimeUnit.MILLISECONDS
+                );
+                isFlushTaskRunning = true;
+                log.info("定时flush任务已启动，间隔: {}ms", mqConfigProperties.getFlushIntervalMillis());
+            }
+        } finally {
+            taskLock.unlock();
+        }
+    }
+
+    /**
+     * 停止定时flush任务
+     */
+    private void stopFlushTask() {
+        taskLock.lock();
+        try {
+            if (isFlushTaskRunning && flushTaskFuture != null) {
+                // 取消当前任务但不影响线程池
+                boolean cancelled = flushTaskFuture.cancel(false);
+                if (cancelled) {
+                    isFlushTaskRunning = false;
+                    log.info("定时flush任务已停止");
+                } else {
+                    log.warn("定时flush任务取消失败，可能已在执行中");
+                }
+            }
+        } finally {
+            taskLock.unlock();
+        }
+    }
+
+    /**
+     * 批量flush逻辑，增加超时控制
+     */
+    private void batchFlush() {
+        // 使用单独的线程执行实际flush操作，避免阻塞调度线程
+        CompletableFuture.runAsync(() -> {
+            try {
+                // 执行flush并设置超时
+                boolean result = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        boolean anyFlushed = false;
+                        for (Map.Entry<String, BufferedWriter> entry : groupWriterMap.entrySet()) {
+                            String groupId = entry.getKey();
+                            BufferedWriter writer = entry.getValue();
+
+                            if (writer != null) {
+                                synchronized (groupLocks.computeIfAbsent(groupId, k -> new Object())) {
+                                    writer.flush();
+                                }
+                                anyFlushed = true;
+                                log.info("消费者组[{}]批量flush完成", groupId);
+                            }
+                        }
+                        return anyFlushed;
+                    } catch (Exception e) {
+                        log.error("flush操作失败", e);
+                        return false;
+                    }
+                }).get(mqConfigProperties.getFlushIntervalMillis(), TimeUnit.MILLISECONDS);
+
+                if (result) {
+                    log.info("定时批量flush完成");
+                }
+            } catch (TimeoutException e) {
+                log.error("flush操作超时", e);
+                // 可以考虑标记该writer为异常状态
+            } catch (Exception e) {
+                log.error("批量flush执行失败", e);
+            }
+        });
     }
 
 
@@ -118,21 +231,33 @@ public class OffsetPersistUtil {
         String fileName = groupId + "-offset.log";
         File groupFile = new File(persistDir, fileName);
 
-        if (!groupFile.exists()) {
-            boolean created = groupFile.createNewFile();
-
-            if (created) {
-                log.info("组[{}]创建新位点文件：{}", groupId, groupFile.getAbsolutePath());
-            } else {
-                throw new IOException("组[" + groupId + "]文件创建失败");
-            }
+        // 如果文件已存在，直接返回（无需创建）
+        if (groupFile.exists()) {
+            log.debug("组[{}]文件已存在：{}", groupId, groupFile.getAbsolutePath());
+            return groupFile;
         }
-        return groupFile;
+        // 尝试创建文件
+        boolean created = groupFile.createNewFile();
+        if (created) {
+            log.info("组[{}]创建新位点文件：{}", groupId, groupFile.getAbsolutePath());
+            return groupFile;
+        }
+        // 若创建失败，再次检查文件是否存在（处理并发场景）
+        if (groupFile.exists()) {
+            log.debug("组[{}]文件已被其他线程创建：{}", groupId, groupFile.getAbsolutePath());
+            return groupFile;
+        }
+        // 确实创建失败，抛出详细异常
+        throw new IOException(
+                String.format("组[%s]文件创建失败：%s。可能原因：权限不足/磁盘满/路径无效",
+                        groupId, groupFile.getAbsolutePath())
+        );
     }
 
 
+
     /**
-     * 写入位点：仅操作当前消费者组的专属文件
+     * 写入位点：仅操作当前消费者组的专属文件 todo：lock锁一下 有共享字眼
      */
     public void writeMessage(String groupId, String topic, String messageId) {
         if (!groupWriterMap.containsKey(groupId)) {
@@ -161,6 +286,8 @@ public class OffsetPersistUtil {
             String line = uniqueKey + "|" + messageId + "\n";
             writer.write(line);
 
+            // 更新写入计数器
+            writeCount.incrementAndGet();
 
             // 4. 更新缓存
             persistedUniqueKeyCache.put(uniqueKey, messageId);
@@ -330,6 +457,7 @@ public class OffsetPersistUtil {
     /**
      * 关闭所有资源（Broker关闭时调用）
      */
+    @PreDestroy
     public void close() {
         groupWriterMap.forEach((groupId, writer) -> {
             try {
