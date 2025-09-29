@@ -5,15 +5,15 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>org.guoguo</groupId>
-    <artifactId>GuoGuomq</artifactId>
+    <artifactId>WhisperMQ</artifactId>
     <version>1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <modules>
-        <module>GuoGuomq-broker</module>
-        <module>GuoGuomq-producer</module>
-        <module>GuoGuomq-consumer</module>
-        <module>GuoGuomq-test</module>
-        <module>GuoGuomq-common</module>
+        <module>WhisperMQ-broker</module>
+        <module>WhisperMQ-producer</module>
+        <module>WhisperMQ-consumer</module>
+        <module>WhisperMQ-test</module>
+        <module>WhisperMQ-common</module>
     </modules>
     <parent>
         <groupId>org.springframework.boot</groupId>
