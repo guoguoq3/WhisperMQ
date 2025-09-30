@@ -70,6 +70,7 @@ public class OffsetPersistUtil {
         // 初始化线程池并指定有意义的线程名
         this.scheduler = Executors.newScheduledThreadPool(2, r -> {
             Thread thread = new Thread(r, "offset-persist-thread");
+            //守护线程
             thread.setDaemon(true);
             return thread;
         });
@@ -77,6 +78,7 @@ public class OffsetPersistUtil {
         // 启动监控任务
         scheduler.scheduleAtFixedRate(this::monitorWriteCount,
                 0,
+                //周期性执行
                 mqConfigProperties.getWindowSizeMillis(),
                 TimeUnit.MILLISECONDS);    }
     /**
