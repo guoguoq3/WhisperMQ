@@ -18,6 +18,8 @@ import org.guoguo.common.util.SnowflakeIdGeneratorUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Map;
 
 @Slf4j
@@ -28,7 +30,6 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
     // 获取Broker管理器实例
     private final BrokerManager brokerManager;
     private final ConsumerGroupManager groupManager;
-
 
     @Autowired
     public MqBrokerHandler(BrokerManager brokerManager, ConsumerGroupManager groupManager) {
