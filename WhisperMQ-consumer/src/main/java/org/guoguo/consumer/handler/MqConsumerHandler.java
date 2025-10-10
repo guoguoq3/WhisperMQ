@@ -58,7 +58,7 @@ public class MqConsumerHandler extends SimpleChannelInboundHandler<String> {
                    ((MqConsumerManager)consumer).sendAck(messageId, "ACK_SUCCESS");
                } else {
                    // 处理失败可发送FAIL，后续Broker可重试（可选扩展）
-                   ((MqConsumerManager)consumer).sendAck(messageId, "FAIL");
+                   ((MqConsumerManager)consumer).sendAck(messageId, "ACK_FAIL");
                    log.warn("WhisperMQ 消费者处理消息{}失败，发送FAIL ACK", messageId);
                }
 

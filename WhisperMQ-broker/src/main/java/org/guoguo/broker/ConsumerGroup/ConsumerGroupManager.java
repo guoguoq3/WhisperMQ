@@ -144,7 +144,7 @@ public class ConsumerGroupManager {
 
 
             for (Map.Entry<String, MqMessage> entry : filteredMessagesStream) {
-            brokerManager.pushMessageToGroup(consumerGroup, entry.getKey(), entry.getValue());
+            brokerManager.pushMessageToGroup(consumerGroup, entry.getKey(), entry.getValue(),false);
         }
         }
     }

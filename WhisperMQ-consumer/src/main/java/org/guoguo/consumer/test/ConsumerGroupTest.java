@@ -41,11 +41,12 @@ public class ConsumerGroupTest {
         // 3. 绑定消息监听器
         mqConsumer.groupSubscribe(subscribeReq, new IMessageListener() {
             @Override
-            public boolean onMessage(MqMessage message) {
+            public boolean onMessage(MqMessage message,String messageId) {
                 log.info("【消费者组测试】收到消息：主题={}，内容={}，标签={}",
                         message.getTopic(), message.getPayload(), message.getTags());
                 return true; // 处理成功，触发ACK
             }
+
         });
 
         // 阻塞等待消息（1分钟）

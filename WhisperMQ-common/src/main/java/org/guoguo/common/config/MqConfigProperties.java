@@ -40,4 +40,8 @@ public class MqConfigProperties {
     private String offsetPersistPath = System.getProperty("user.dir") + "/WhisperMQ-offset";
     /** 单个持久化文件最大大小（默认：10MB，超过则创建新文件） */
     private long maxFileSize = 1024 * 1024 * 10; // 10MB
+
+    //新增死信队列配置
+    /** 最大死信重试数,默认重试5次*/
+    private int maxDeadLetterRetryCount=5;
 }

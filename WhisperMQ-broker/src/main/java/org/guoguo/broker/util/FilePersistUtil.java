@@ -52,7 +52,7 @@ public class FilePersistUtil {
     public void init() {
         try {
             //若是持久化目录不存在就创建一个
-            File persistDir = new File(mqConfigProperties.getPersistPath());
+            File persistDir = new File(mqConfigProperties.getPersistPath()+"/messages");
             if (!persistDir.exists()) {
                 boolean mkdirSuccess = persistDir.mkdirs();
                 if (mkdirSuccess) {
