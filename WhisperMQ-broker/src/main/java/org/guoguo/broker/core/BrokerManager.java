@@ -200,6 +200,7 @@ public class BrokerManager {
         Integer deadRetryCount = deadLetterDTO.getDeadRetryCount();
         if(deadRetryCount==-1||deadRetryCount>=config.getMaxDeadLetterRetryCount()){
             try {
+                filePersistUtil.updateDeadLetterMessageStatus(originMessageId);
                 deadLetterQueue.put(deadLetterDTO);
                 log.info("WhisperMQ Broker 死信消息{}已存入死信队列，死信原因：{}", deadLetterId, deadLetterDTO.getDeadType());
                /*

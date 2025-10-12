@@ -5,6 +5,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.guoguo.broker.core.BrokerManager;
 import org.guoguo.common.config.MqConfigProperties;
+import org.guoguo.common.constant.MessagePersistStatusType;
 import org.guoguo.common.pojo.Entity.MqMessage;
 import org.guoguo.common.pojo.Entity.MqMessageEnduring;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -92,6 +93,89 @@ public class FilePersistUtil {
 
         }
     }
+    /**
+     * 死信消息后按行读取持久化消息文件并修改状态字段
+     */
+    public synchronized void updateDeadLetterMessageStatus(String messageId) {
+        try (RandomAccessFile raf = new RandomAccessFile(currentPersistFile, "rw")) {
+            long fileLength = raf.length();
+            if (fileLength == 0) return;
+
+            // 用于存储文件内容的缓冲区
+            byte[] fileBuffer = new byte[(int) Math.min(fileLength, 1024 * 1024)]; // 最大1MB
+            raf.seek(0);
+            raf.readFully(fileBuffer, 0, (int) Math.min(fileLength, fileBuffer.length));
+
+            // 将文件内容按行分割
+            String content = new String(fileBuffer, StandardCharsets.UTF_8);
+            String[] lines = content.split("\n", -1);
+
+            long currentPosition = 0;
+            boolean found = false;
+
+            // 遍历每一行查找目标消息
+            for (int i = 0; i < lines.length; i++) {
+                String line = lines[i];
+                if (i < lines.length - 1) {
+                    line += "\n"; // 添加换行符（除了最后一行）
+                }
+
+                // 检查是否是我们要找的行
+                if (lines[i].startsWith(messageId + "|")) {
+                    String originalLine = lines[i];
+                    String[] parts = originalLine.split("\\|", 3);
+                    if (parts.length == 3) {
+                        // 构造更新后的行
+                        String updatedLine = parts[0] + "|" + parts[1] + "|" +
+                                MessagePersistStatusType.DEAD_LETTER_MESSAGE.getStatus();
+
+//                        // 如果不是最后一行，添加换行符
+//                        if (i < lines.length - 1) {
+//                            updatedLine += "\n";
+//                        }
+
+//                        // 计算原先行的字节长度
+//                        byte[] originalBytes = lines[i].getBytes(StandardCharsets.UTF_8);
+//                        if (i < lines.length - 1) {
+//                            originalBytes = (lines[i] + "\n").getBytes(StandardCharsets.UTF_8);
+//                        }
+
+                        // 计算更新后行的字节长度
+                        byte[] updatedBytes = updatedLine.getBytes(StandardCharsets.UTF_8);
+
+                        // 定位到该行开始位置
+                        raf.seek(currentPosition);
+
+                        // 写入更新后的内容
+                        raf.write(updatedBytes);
+
+                        // 如果新行比原行短，用空格填充
+//                        if (updatedBytes.length < originalBytes.length) {
+//                            int diff = originalBytes.length - updatedBytes.length;
+//                            for (int j = 0; j < diff; j++) {
+//                                raf.writeByte('1');
+//                            }
+//                        }
+
+                        log.info("WhisperMQ Broker 死信消息状态更新成功：{}", updatedLine.trim());
+                        found = true;
+                        break;
+                    }
+                }
+
+                // 更新当前位置
+                currentPosition += line.getBytes(StandardCharsets.UTF_8).length;
+            }
+
+            if (!found) {
+                log.warn("未找到消息ID为 {} 的消息行", messageId);
+            }
+
+        } catch (Exception e) {
+            log.error("更新死信消息状态失败，消息ID={}", messageId, e);
+        }
+    }
+
 
     /**
      * 2. 写入消息到持久化文件
@@ -115,7 +199,7 @@ public class FilePersistUtil {
 
 
            //进行消息封装
-           String messageStr = messageId + "|" +JSON.toJSONString(message);
+           String messageStr = messageId + "|" +JSON.toJSONString(message)+"|"+ MessagePersistStatusType.NORMAL_MESSAGE.getStatus();
            //写入文件
            writer.write(messageStr);
            //换行 方便后续按行读取
@@ -189,6 +273,7 @@ public class FilePersistUtil {
 
         List<String> recoverFailedIds = new ArrayList<>();
         int recoverCount = 0;
+        int deadCount=0;
 
         // 遍历所有持久化文件，按行读取消息
         for (File file : files) {
@@ -203,22 +288,28 @@ public class FilePersistUtil {
                         continue;
                     }
 
-                    // 解析“消息ID|消息JSON”（之前写入时用|分隔）
-                    String[] parts = line.split("\\|", 2); // 分割为2部分：消息ID + 消息JSON
-                    if (parts.length != 2) {
+                    // 解析“消息ID|消息JSON|消息状态（0，正常，1，已死信）”（之前写入时用|分隔）
+                    String[] parts = line.split("\\|", 3); // 分割为2部分：消息ID + 消息JSON
+                    if (parts.length != 3) {
                         log.warn("WhisperMQ 持久化文件解析异常，无效行：{}", line);
                         continue;
                     }
 
-                    String messageId = parts[0];
-                    String messageJson = parts[1];
+                    String messageId = parts[0].trim(); // 对消息ID也进行trim处理
+                    String messageJson = parts[1].trim(); // 对消息JSON也进行trim处理
+                    String messageStatus = parts[2].trim(); // 对状态也进行trim处理
                   //以前想着用外部引用 做this处理 但是这样是最优良的
                   try {
-                      // 反序列化为 MqMessage
-                      MqMessageEnduring message = JSON.parseObject(messageJson, MqMessageEnduring.class);
-                      // 恢复到 BrokerManager 的内存（messageMap）
-                      brokerManager.getMessageMap().put(messageId, message);
-                      recoverCount++;
+                      if (messageStatus.equals("0")){
+                          // 反序列化为 MqMessage
+                          MqMessageEnduring message = JSON.parseObject(messageJson, MqMessageEnduring.class);
+                          // 恢复到 BrokerManager 的内存（messageMap）
+                          brokerManager.getMessageMap().put(messageId, message);
+                          recoverCount++;
+                      }else {
+                          deadCount++;
+                      }
+
                   }catch (Exception e){
                       recoverFailedIds.add(messageId);
                       log.error("WhisperMQ 文件内恢复消息序列化失败，文件：{} 消息ID: {}", file.getName(),messageId, e);
@@ -226,7 +317,7 @@ public class FilePersistUtil {
 
 
                 }
-                log.info("WhisperMQ 从文件 {} 恢复消息 {} 条", file.getName(), recoverCount);
+                log.info("WhisperMQ 从文件 {} 恢复消息 {} 条,死信消息{}条", file.getName(), recoverCount,deadCount);
             } catch (Exception e) {
                 log.error("WhisperMQ 从文件 {} 恢复消息失败", file.getName(), e);
             }

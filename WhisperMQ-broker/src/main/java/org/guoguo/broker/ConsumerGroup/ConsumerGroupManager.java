@@ -122,7 +122,7 @@ public class ConsumerGroupManager {
             return;
         }
 
-        //回溯一波位点 todo： 这块只有持久化文件中的位点 第二种就好全量恢复
+        //回溯一波位点
         offsetPersistUtil.init(consumerGroup, topic);
 
         String lastOffset = consumerGroup.getTopicOffsetMap().get(topic);
@@ -137,6 +137,7 @@ public class ConsumerGroupManager {
                 subscribeReqDTO.getGroupId(), topic, subscribeReqDTO.getTags());
 
            //获取在消费者位点之后的消息 两个条件一个是大于lastOffset 一个是topic相同  todo：可能还会有tag的事情
+            System.out.println(brokerManager.getMessageMap());
             List<Map.Entry<String, MqMessage>> filteredMessagesStream = brokerManager.getMessageMap().entrySet().stream()
                     .filter(entry -> topic.equals(entry.getValue().getTopic())) // 主题匹配
                     .filter(entry -> Long.parseLong(entry.getKey()) > Long.parseLong(lastOffset)) // ID大于lastOffset

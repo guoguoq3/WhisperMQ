@@ -35,7 +35,6 @@ public class OffsetPersistUtil {
     private final MqConfigProperties mqConfigProperties;
 
 
-
     // 内存缓存：记录已持久化的唯一键（groupId:topic），避免重复写入（可选优化，减少文件IO） 目前需确保log日志其中键唯一 每次来新消息 就先缓存替换 每一段时间替换文件
     private final Map<String, String> persistedUniqueKeyCache = new ConcurrentHashMap<>();
 
@@ -322,6 +321,7 @@ public class OffsetPersistUtil {
         //仅遍历当前组的位点文件
         try (BufferedReader reader = Files.newBufferedReader(groupFile.toPath())){
             String line;
+            //todo:这块每行都做正则性能上
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
                 if (line.isEmpty()) continue;
