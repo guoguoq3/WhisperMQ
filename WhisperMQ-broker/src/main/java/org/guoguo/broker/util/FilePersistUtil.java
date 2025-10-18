@@ -97,6 +97,7 @@ public class FilePersistUtil {
      * 死信消息后按行读取持久化消息文件并修改状态字段
      */
     public synchronized void updateDeadLetterMessageStatus(String messageId) {
+        System.out.println(5454);
         try (RandomAccessFile raf = new RandomAccessFile(currentPersistFile, "rw")) {
             long fileLength = raf.length();
             if (fileLength == 0) return;
@@ -191,7 +192,7 @@ public class FilePersistUtil {
                 //关闭流
                writer.close();
                //创建新文件
-               currentPersistFile=createNewPersistFile(new File(mqConfigProperties.getPersistPath()));
+               currentPersistFile=createNewPersistFile(new File(mqConfigProperties.getPersistPath()+"/messages"));
                //创建文件写入流 之后直接写就可以了  这里变了是因为换文件了
                //不能完全保持流不变，因为BufferedWriter是与特定文件关联的，当文件切换时，必须关闭旧的流并创建新的流。
                writer=Files.newBufferedWriter(currentPersistFile.toPath(), StandardCharsets.UTF_8, StandardOpenOption.APPEND);

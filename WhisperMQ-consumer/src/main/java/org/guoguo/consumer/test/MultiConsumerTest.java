@@ -59,7 +59,7 @@ public class MultiConsumerTest {
                     //拒绝消息
                     log.info("【同组-消费者1】拒绝消息(重试) | 组：ORDER_GROUP | 主题：{} | 内容：{} | 标签：{} | 消息ID：{}",
                             message.getTopic(),message.getPayload(),message.getTags(),messageId);
-                    consumer1.reject(message, messageId, DeadType.CONSUME_TIMEOUT, false);//-------------------------
+                    consumer1.reject(message, messageId, DeadType.CONSUME_TIMEOUT, true);//-------------------------
                     return false;
                 }
                 return true; // 处理成功，发送ACK
@@ -82,7 +82,7 @@ public class MultiConsumerTest {
                     //拒绝消息
                     log.info("【同组-消费者2】拒绝消息(重试) | 组：ORDER_GROUP | 主题：{} | 内容：{} | 标签：{} | 消息ID：{}",
                             message.getTopic(),message.getPayload(),message.getTags(),messageId);
-                    consumer2.reject(message, messageId, DeadType.CONSUME_TIMEOUT, false);//-------------------------
+                    consumer2.reject(message, messageId, DeadType.CONSUME_TIMEOUT, true);//-------------------------
                     return false;
                 }
                 return true; // 处理成功，发送ACK

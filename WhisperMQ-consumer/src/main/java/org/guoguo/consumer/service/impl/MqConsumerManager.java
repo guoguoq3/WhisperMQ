@@ -238,8 +238,12 @@ public class MqConsumerManager extends MqConsumer {
                 rpcDto.setRequest(true);
                 rpcDto.setMethodType(MethodType.C_DEAD_MSG);
                 rpcDto.setJson(JSON.toJSONString(deadLetterDTO));// 使用更新后的DTO
-                log.info("WhisperMQ 死信队列消费者拒绝消息{}，死信类型:{}，重试次数:{}", messageId, DeadType, deadLetterDTO.getDeadRetryCount());
-                channel.writeAndFlush(JSON.toJSONString(rpcDto) + "\n");
+                if(deadLetterDTO.getDeadRetryCount()<=config.getMaxDeadLetterRetryCount()){
+                    log.info("WhisperMQ 死信队列消费者拒绝消息{}，死信类型:{}，重试次数:{}", messageId, DeadType, deadLetterDTO.getDeadRetryCount());
+                    channel.writeAndFlush(JSON.toJSONString(rpcDto) + "\n");
+                    return;
+                }
+                log.info("WhisperMQ 死信队列消费者拒绝消息{}，死信类型:{}，重试次数已达上限，将加入死信队列", messageId, DeadType);
 
             }
         }

@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
  * MQ 统一配置类，绑定 application.properties 中的配置
  */
 @Data
-//@Component
+@Component
 @ConfigurationProperties(prefix = "whisper-mq") // 配置前缀
 public class MqConfigProperties {
     /** Broker 地址（默认：127.0.0.1） */
@@ -42,6 +42,5 @@ public class MqConfigProperties {
     private long maxFileSize = 1024 * 1024 * 10; // 10MB
 
     //新增死信队列配置
-    /** 最大死信重试数,默认重试5次*/
-    private int maxDeadLetterRetryCount=5;
+    private int maxDeadLetterRetryCount=8;
 }

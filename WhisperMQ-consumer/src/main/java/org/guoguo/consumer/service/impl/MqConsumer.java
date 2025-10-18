@@ -34,9 +34,10 @@ import java.util.Map;
 @Slf4j
 @Component // 交给 Spring 管理
 public abstract class MqConsumer implements IMqConsumer {
-    private final MqConfigProperties config;
+    protected final MqConfigProperties config;
     protected Channel channel;
     private EventLoopGroup group;
+
 
     protected final Map<String, IMessageListener> topicListenerMap = new HashMap<>();
 
@@ -47,7 +48,6 @@ public abstract class MqConsumer implements IMqConsumer {
     @Autowired
     public MqConsumer( MqConfigProperties config) {
         this.config = config;
-
     }
 
 

@@ -60,13 +60,14 @@ public class BrokerManager {
             @Lazy ConsumerGroupManager consumerGroupManager,
             MqConfigProperties config,
             DeadLetterQueue deadLetterQueue,
-            @Lazy DeadLetterPersistUtil deadLetterPersistUtil
+            DeadLetterPersistUtil deadLetterPersistUtil
     ) {
         this.filePersistUtil = filePersistUtil;
         this.groupManager = consumerGroupManager;
         this.config = config;
         this.deadLetterQueue = deadLetterQueue;
         this.deadLetterPersistUtil = deadLetterPersistUtil;
+        log.info("WhisperMQ Broker 死信配置重试次数：{}", config.getMaxDeadLetterRetryCount());
 
     }
 
@@ -193,9 +194,10 @@ public class BrokerManager {
      * description:       处理生产者返回的死信消息，实现死信队列逻辑
      */
     public void handlerDeadLetter(DeadLetterDTO deadLetterDTO,String originMessageId) {
-        log.info("WhisperMQ Broker 收到生产者返回的死信消息：ID={}", deadLetterDTO.getDeadLetterId());
+        log.info("WhisperMQ Broker 收到生产者返回的死信消息：原ID={},死信ID={}", originMessageId,deadLetterDTO.getDeadLetterId());
         //获取死信ID
         String deadLetterId = deadLetterDTO.getDeadLetterId();
+
         //获取死信重试次数
         Integer deadRetryCount = deadLetterDTO.getDeadRetryCount();
         if(deadRetryCount==-1||deadRetryCount>=config.getMaxDeadLetterRetryCount()){
@@ -203,13 +205,12 @@ public class BrokerManager {
                 filePersistUtil.updateDeadLetterMessageStatus(originMessageId);
                 deadLetterQueue.put(deadLetterDTO);
                 log.info("WhisperMQ Broker 死信消息{}已存入死信队列，死信原因：{}", deadLetterId, deadLetterDTO.getDeadType());
-               /*
                 deadLetterPersistUtil.writeDeadLetter(deadLetterDTO);
                 log.info("WhisperMQ Broker 死信消息{}已持久化", deadLetterId);
-                */
                 return ;
             } catch (Exception e) {
                 log.error("处理死信消息时发生异常，消息ID: {}", deadLetterDTO.getDeadLetterId(), e);
+                return ;
             }
         }
 
