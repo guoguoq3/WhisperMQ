@@ -11,5 +11,8 @@ public interface IMessageListener {
      * @param message 收到的消息
      * @return 处理结果（true=成功，false=失败）
      */
-    boolean onMessage(MqMessage message);
+
+
+
+    boolean onMessage(MqMessage message, String messageId);
 }

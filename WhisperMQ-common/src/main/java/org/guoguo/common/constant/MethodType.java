@@ -21,4 +21,6 @@ public class MethodType {
     public static final String CONSUMER_LEAVE_GROUP = "CONSUMER_LEAVE_GROUP";
     // Broker向生产者发送确认
     public static final String P_CONFIRM_MSG = "P_CONFIRM_MSG";
+    // 消费者返回死信消息
+    public static final String C_DEAD_MSG = "C_DEAD_MSG";
 }

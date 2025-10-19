@@ -1,9 +1,9 @@
 package org.guoguo.consumer.test;
 
 import lombok.extern.slf4j.Slf4j;
+import org.guoguo.common.constant.DeadType;
 import org.guoguo.common.pojo.DTO.SubscribeReqDTO;
 import org.guoguo.common.pojo.Entity.MqMessage;
-import org.guoguo.common.util.SnowflakeIdGeneratorUtil;
 import org.guoguo.consumer.service.IMessageListener;
 import org.guoguo.consumer.service.impl.MqConsumerManager;
 import org.junit.jupiter.api.Test;
@@ -52,9 +52,16 @@ public class MultiConsumerTest {
         req1.setGroupId("ORDER_GROUP");
         consumer1.groupSubscribe(req1, new IMessageListener() {
             @Override
-            public boolean onMessage(MqMessage message) {
-                log.info("【同组-消费者1】收到消息 | 组：ORDER_GROUP | 主题：{} | 内容：{} | 消息ID：{}",
+            public boolean onMessage(MqMessage message, String messageId) {
+                log.info("【同组-消费者1】收到消息 | 组：ORDER_GROUP | 主题：{} | 内容：{} | 标签：{}",
                         message.getTopic(), message.getPayload(), message.getTags());
+                if(message.getPayload().equals("测试错误信息")){
+                    //拒绝消息
+                    log.info("【同组-消费者1】拒绝消息(重试) | 组：ORDER_GROUP | 主题：{} | 内容：{} | 标签：{} | 消息ID：{}",
+                            message.getTopic(),message.getPayload(),message.getTags(),messageId);
+                    consumer1.reject(message, messageId, DeadType.CONSUME_TIMEOUT, true);//-------------------------
+                    return false;
+                }
                 return true; // 处理成功，发送ACK
             }
         });
@@ -68,11 +75,20 @@ public class MultiConsumerTest {
         req2.setGroupId("ORDER_GROUP");
         consumer2.groupSubscribe(req2, new IMessageListener() {
             @Override
-            public boolean onMessage(MqMessage message) {
-                log.info("【同组-消费者2】收到消息 | 组：ORDER_GROUP | 主题：{} | 内容：{} | 消息ID：{}",
+            public boolean onMessage(MqMessage message, String messageId) {
+                log.info("【同组-消费者2】收到消息 | 组：ORDER_GROUP | 主题：{} | 内容：{} | 标签：{}",
                         message.getTopic(), message.getPayload(), message.getTags());
+                if(message.getPayload().equals("测试错误信息")){
+                    //拒绝消息
+                    log.info("【同组-消费者2】拒绝消息(重试) | 组：ORDER_GROUP | 主题：{} | 内容：{} | 标签：{} | 消息ID：{}",
+                            message.getTopic(),message.getPayload(),message.getTags(),messageId);
+                    consumer2.reject(message, messageId, DeadType.CONSUME_TIMEOUT, true);//-------------------------
+                    return false;
+                }
                 return true; // 处理成功，发送ACK
             }
+
+
         });
         log.info("【同组-消费者2】初始化完成，等待消息...");
 
@@ -98,9 +114,9 @@ public class MultiConsumerTest {
         req1.setTags(Arrays.asList("TAG1"));
         consumer1.groupSubscribe(req1, new IMessageListener() {
             @Override
-            public boolean onMessage(MqMessage message) {
-                log.info("【不同组-消费者1】收到消息 | 组：ORDER_GROUP | 主题：{} | 内容：{} | 消息ID：{}",
-                        message.getTopic(), message.getPayload(), message.getTags());
+            public boolean onMessage(MqMessage message, String messageId) {
+                log.info("【不同组-消费者1】收到消息 | 组：ORDER_GROUP | 主题：{} | 内容：{} | 消息标签：{} | 消息ID：{}",
+                        message.getTopic(), message.getPayload(), message.getTags(), messageId);
                 return true;
             }
         });
@@ -109,12 +125,24 @@ public class MultiConsumerTest {
         // -------------------------- 消费者2：加入PAY_GROUP，订阅TEST_TOPIC-TAG1 --------------------------
         consumer2.joinGroup("PAY_GROUP");
         SubscribeReqDTO req2 = new SubscribeReqDTO();
+        req2.setTopic("TEST_TOPIC");
         req2.setTags(Arrays.asList("TAG1"));
         consumer2.groupSubscribe(req2, new IMessageListener() {
-            @Override
+          /*  @Override
             public boolean onMessage(MqMessage message) {
                 log.info("【不同组-消费者2】收到消息 | 组：PAY_GROUP | 主题：{} | 内容：{} | 消息ID：{}",
                         message.getTopic(), message.getPayload(), message.getTags());
+                return true;
+            }*/
+
+            @Override
+            public boolean onMessage(MqMessage message, String messageId) {
+                log.info("【不同组-消费者2】收到消息 | 组：PAY_GROUP | 主题：{} | 内容：{} | 标签列表：{} | 消息ID：{}",
+                        message.getTopic(), message.getPayload(), message.getTags(), messageId);
+                if(message.getPayload().equals("测试错误信息")){
+                    //拒绝消息
+                    consumer2.reject(message, messageId, DeadType.CONSUME_TIMEOUT, true);//-------------------------
+                }
                 return true;
             }
         });

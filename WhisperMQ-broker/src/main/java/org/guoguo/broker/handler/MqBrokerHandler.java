@@ -8,12 +8,9 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.guoguo.broker.ConsumerGroup.ConsumerGroupManager;
 import org.guoguo.broker.core.BrokerManager;
-import org.guoguo.common.pojo.DTO.ConsumerAckReqDTO;
-import org.guoguo.common.pojo.DTO.ProducerMessageDTO;
+import org.guoguo.common.pojo.DTO.*;
 import org.guoguo.common.pojo.Entity.*;
-        import org.guoguo.common.pojo.DTO.RpcMessageDTO;
 import org.guoguo.common.constant.MethodType;
-import org.guoguo.common.pojo.DTO.SubscribeReqDTO;
 import org.guoguo.common.util.SnowflakeIdGeneratorUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -94,11 +91,10 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
             switch (methodType) {
 
                 //处理生产者发送消息 并告知生产者消息已收到
-                //TODO 处理生产者重传的逻辑判断，避免重复消费和消息丢失
                 case MethodType.P_SEND_MSG:
                     ProducerMessageDTO pmsDto=JSON.parseObject(rpcDto.getJson(), ProducerMessageDTO.class);
                     MqMessageEnduring mqMessage=JSON.parseObject(pmsDto.getJson(), MqMessageEnduring.class);
-                    brokerManager.handlerMessage(mqMessage,funcDto.getMessageId());
+                    brokerManager.handlerMessage(mqMessage,funcDto.getMessageId(),false);
                     sendSuccessResponse(ctx,traceId,pmsDto.getCurrentVersion());
                     break;
 
@@ -135,6 +131,12 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
                 case MethodType.C_ACK_MSG:
                     ConsumerAckReqDTO ackReq = JSON.parseObject(rpcDto.getJson(), ConsumerAckReqDTO.class);
                     brokerManager.handleConsumerAck(ackReq,ackReq.getGroupId());
+                    break;
+
+                case MethodType.C_DEAD_MSG:
+                    DeadLetterDTO deadLetter = JSON.parseObject(rpcDto.getJson(), DeadLetterDTO.class);
+                    log.info("Broker 收到死信消息：{}", deadLetter.getMessageId());
+                    brokerManager.handlerDeadLetter(deadLetter, funcDto.getMessageId());
                     break;
 
                 default:

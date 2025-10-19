@@ -4,10 +4,9 @@ import com.alibaba.fastjson.JSON;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.guoguo.common.config.MqConfigProperties;
+import org.guoguo.common.constant.DeadType;
 import org.guoguo.common.constant.MethodType;
-import org.guoguo.common.pojo.DTO.ConsumerAckReqDTO;
-import org.guoguo.common.pojo.DTO.RpcMessageDTO;
-import org.guoguo.common.pojo.DTO.SubscribeReqDTO;
+import org.guoguo.common.pojo.DTO.*;
 import org.guoguo.common.pojo.Entity.ConsumerThings;
 import org.guoguo.common.pojo.Entity.MqMessage;
 import org.guoguo.common.util.SnowflakeIdGeneratorUtil;
@@ -15,6 +14,9 @@ import org.guoguo.consumer.service.IMessageListener;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
+
+import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Component
@@ -28,6 +30,7 @@ public class MqConsumerManager extends MqConsumer {
 
     // 消费者所属的组（支持多组，简化为单组）
     private String currentGroupId;
+    private ConcurrentHashMap<String,DeadLetterDTO> deadLetterMap = new ConcurrentHashMap<>();
 
 
 
@@ -142,7 +145,7 @@ public class MqConsumerManager extends MqConsumer {
 
         try {
             // 调用用户自定义监听器
-            return listener.onMessage(message);
+            return listener.onMessage(message, messageId);
         } catch (Exception e) {
             log.error("WhisperMQ 消费者处理消息{}异常", messageId, e);
             return false;
@@ -176,5 +179,73 @@ public class MqConsumerManager extends MqConsumer {
 
         channel.writeAndFlush(JSON.toJSONString(rpcDto) + "\n");
         log.info("WhisperMQ 消费者向组{}发送ACK：消息{}，状态{}", currentGroupId, messageId, ackStatus);
+    }
+    /**
+     * 
+     * @author jjs
+     * date 2025/10/9 15:11
+     * @param message, messageId, isRetry
+     * description:       提供关于死信队列的消费者端拒绝方法
+     */
+    public void reject(MqMessage message, String messageId, DeadType DeadType, boolean isRetry) {
+
+        //还原功能层DTO
+        PushMessageDTO pushMessageDTO = new PushMessageDTO();
+        pushMessageDTO.setMessageId(messageId);
+        pushMessageDTO.setJson(JSON.toJSONString(message));
+        pushMessageDTO.setConsumerGroup(currentGroupId);
+        //构建死信DTO
+        DeadLetterDTO deadLetter = new DeadLetterDTO();
+        deadLetter.setMessageId(messageId);
+        deadLetter.setDeadType(DeadType);
+        deadLetter.setJson(JSON.toJSONString(pushMessageDTO));
+
+        //如果不重试或者获取为空
+        if((!isRetry)){
+            deadLetter.setDeadRetryCount(-1); // 设置为-1表示不重试
+            log.info("WhisperMQ 死信队列消费者拒绝消息{}，死信类型:{}，不重试", messageId, DeadType);
+            // 直接发送回broker
+            RpcMessageDTO rpcDto = new RpcMessageDTO();
+            rpcDto.setRequest(true);
+            rpcDto.setMethodType(MethodType.C_DEAD_MSG);
+            rpcDto.setJson(JSON.toJSONString(deadLetter));
+            channel.writeAndFlush(JSON.toJSONString(rpcDto) + "\n");
+
+        }else{
+            //从重试map中获取死信dto
+            DeadLetterDTO deadLetterDTO = deadLetterMap.get(messageId);
+
+            if(deadLetterDTO==null){
+
+                //初始化重试次数并首次存入重试map中
+                deadLetter.setDeadRetryCount(0);
+                deadLetterMap.put(messageId,deadLetter);
+                //发送回broker
+                RpcMessageDTO rpcDto = new RpcMessageDTO();
+                rpcDto.setRequest(true);
+                rpcDto.setMethodType(MethodType.C_DEAD_MSG);
+                rpcDto.setJson(JSON.toJSONString(deadLetter));
+                log.info("WhisperMQ 死信队列消费者拒绝消息{}，死信类型:{}，重试次数:{}", messageId, DeadType, deadLetter.getDeadRetryCount());
+                channel.writeAndFlush(JSON.toJSONString(rpcDto) + "\n");
+
+            }else{
+
+                //使重试次数自增1并重新放回map中
+                deadLetterDTO.setDeadRetryCount(deadLetterDTO.getDeadRetryCount()+1);
+                deadLetterMap.put(messageId,deadLetterDTO);
+                //发送回broker
+                RpcMessageDTO rpcDto = new RpcMessageDTO();
+                rpcDto.setRequest(true);
+                rpcDto.setMethodType(MethodType.C_DEAD_MSG);
+                rpcDto.setJson(JSON.toJSONString(deadLetterDTO));// 使用更新后的DTO
+                if(deadLetterDTO.getDeadRetryCount()<=config.getMaxDeadLetterRetryCount()){
+                    log.info("WhisperMQ 死信队列消费者拒绝消息{}，死信类型:{}，重试次数:{}", messageId, DeadType, deadLetterDTO.getDeadRetryCount());
+                    channel.writeAndFlush(JSON.toJSONString(rpcDto) + "\n");
+                    return;
+                }
+                log.info("WhisperMQ 死信队列消费者拒绝消息{}，死信类型:{}，重试次数已达上限，将加入死信队列", messageId, DeadType);
+
+            }
+        }
     }
 }

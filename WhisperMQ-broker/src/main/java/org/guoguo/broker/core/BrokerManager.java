@@ -5,9 +5,13 @@ import io.netty.channel.Channel;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.guoguo.broker.ConsumerGroup.ConsumerGroupManager;
+import org.guoguo.broker.util.DeadLetterPersistUtil;
 import org.guoguo.broker.util.FilePersistUtil;
+import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.pojo.DTO.ConsumerAckReqDTO;
+import org.guoguo.common.pojo.DTO.DeadLetterDTO;
 import org.guoguo.common.pojo.Entity.ConsumerGroup;
+import org.guoguo.common.pojo.Entity.DeadLetterQueue;
 import org.guoguo.common.pojo.Entity.MqMessage;
 import org.guoguo.common.constant.MethodType;
 import org.guoguo.common.pojo.DTO.RpcMessageDTO;
@@ -39,20 +43,42 @@ public class BrokerManager {
     private final Map<String, String> consumerAckMap = new ConcurrentHashMap<>();
 
 
+    //注入配置文件
+    private final MqConfigProperties config;
     private final FilePersistUtil filePersistUtil;
+    private final DeadLetterPersistUtil deadLetterPersistUtil;
+
+    //注入死信队列
+    private  DeadLetterQueue deadLetterQueue;
+
+
+
+    // 注入配置
     @Autowired
-    public BrokerManager(@Lazy FilePersistUtil filePersistUtil,@Lazy ConsumerGroupManager consumerGroupManager) {
+    public BrokerManager(
+            @Lazy FilePersistUtil filePersistUtil,
+            @Lazy ConsumerGroupManager consumerGroupManager,
+            MqConfigProperties config,
+            DeadLetterQueue deadLetterQueue,
+            DeadLetterPersistUtil deadLetterPersistUtil
+    ) {
         this.filePersistUtil = filePersistUtil;
         this.groupManager = consumerGroupManager;
+        this.config = config;
+        this.deadLetterQueue = deadLetterQueue;
+        this.deadLetterPersistUtil = deadLetterPersistUtil;
+        log.info("WhisperMQ Broker 死信配置重试次数：{}", config.getMaxDeadLetterRetryCount());
+
     }
 
       /**
      * 处理生产者发送的消息：存储消息并推送给订阅者
      */
-    public void handlerMessage(MqMessageEnduring mqMessage, String messageId){
+    public void handlerMessage(MqMessageEnduring mqMessage, String messageId,Boolean isRetry){
         messageMap.put(messageId, mqMessage);
         //默认为true，即进行持久化
-        if(mqMessage.isEnduring()){
+
+        if(mqMessage.isEnduring()&&!isRetry){
             //持久化
             log.info("WhisperMQ Broker 存储消息：ID={}，主题={}", messageId, mqMessage.getTopic());
             //核心持久化时机是在 Broker 接收到生产者的消息后、尚未发送给消费者之前完成存储
@@ -67,7 +93,7 @@ public class BrokerManager {
         }
         //推送前检查ack状态
         for (ConsumerGroup group : subscribeGroups.values()) {
-            pushMessageToGroup(group, messageId, mqMessage);
+            pushMessageToGroup(group, messageId, mqMessage, isRetry);
         }
     }
 
@@ -75,7 +101,7 @@ public class BrokerManager {
     /**
      * 向消费者组推送消息（组内负载均衡：轮询分配给在线消费者）
      */
-    public void pushMessageToGroup(ConsumerGroup group, String messageId, MqMessage message) {
+    public void pushMessageToGroup(ConsumerGroup group, String messageId, MqMessage message,Boolean isRetry) {
         String groupId = group.getGroupId();
         String topic = message.getTopic();
         Map<String, Channel> onlineConsumers = group.getOnlineConsumers();
@@ -84,13 +110,15 @@ public class BrokerManager {
             log.info("WhisperMQ Broker 无消费者组订阅主题{}，消息{}暂不推送", topic, messageId);
             return;
         }
-
-        // 检查组的消费位点：只推送位点之后的消息
-        String groupOffset = group.getTopicOffsetMap().get(topic);
-        if (groupOffset != null && Long.parseLong(messageId) <= Long.parseLong(groupOffset)) {
-            log.info("WhisperMQ Broker 消息{}已在组{}的消费位点之前，跳过推送", messageId, groupId);
-            return;
+        if(!isRetry){
+            // 检查组的消费位点：只推送位点之后的消息
+            String groupOffset = group.getTopicOffsetMap().get(topic);
+            if (groupOffset != null && Long.parseLong(messageId) <= Long.parseLong(groupOffset)) {
+                log.info("WhisperMQ Broker 消息{}已在组{}的消费位点之前，跳过推送", messageId, groupId);
+                return;
+            }
         }
+
 
         //组内负载均衡：轮询选择一个消费者（简化实现）
         List<String> consumerIds = new ArrayList<>(onlineConsumers.keySet());
@@ -133,7 +161,10 @@ public class BrokerManager {
     public void handleConsumerAck(ConsumerAckReqDTO ackReq, String consumerId) {
         String messageId=ackReq.getMessageId();
         String consumerGroup = ackReq.getGroupId();
-
+        //todo:    放到常量
+        if(ackReq.getAckStatus().equals("ACK_FAIL")){
+           return;
+        }
         //校验
         if (messageId==null || consumerId==null){
             log.error("WhisperMQ Broker 消费确认请求参数无效：messageId={}，consumerId={}", messageId, consumerId);
@@ -154,6 +185,43 @@ public class BrokerManager {
         groupManager.updateGroupOffset(consumerGroup, topic, messageId);
         log.info("WhisperMQ Broker 收到消费者{}的ACK：消息{}，状态{}", consumerId, messageId, ackReq.getAckStatus());
 
+    }
+    /*
+     *
+     * @author jjs
+     * date 2025/10/9 16:13
+     * @param deadLetterDTO
+     * description:       处理生产者返回的死信消息，实现死信队列逻辑
+     */
+    public void handlerDeadLetter(DeadLetterDTO deadLetterDTO,String originMessageId) {
+        log.info("WhisperMQ Broker 收到生产者返回的死信消息：原ID={},死信ID={}", originMessageId,deadLetterDTO.getDeadLetterId());
+        //获取死信ID
+        String deadLetterId = deadLetterDTO.getDeadLetterId();
+
+        //获取死信重试次数
+        Integer deadRetryCount = deadLetterDTO.getDeadRetryCount();
+        if(deadRetryCount==-1||deadRetryCount>=config.getMaxDeadLetterRetryCount()){
+            try {
+                filePersistUtil.updateDeadLetterMessageStatus(originMessageId);
+                deadLetterQueue.put(deadLetterDTO);
+                log.info("WhisperMQ Broker 死信消息{}已存入死信队列，死信原因：{}", deadLetterId, deadLetterDTO.getDeadType());
+                deadLetterPersistUtil.writeDeadLetter(deadLetterDTO);
+                log.info("WhisperMQ Broker 死信消息{}已持久化", deadLetterId);
+                messageMap.remove(originMessageId);
+                return ;
+            } catch (Exception e) {
+                log.error("处理死信消息时发生异常，消息ID: {}", deadLetterDTO.getDeadLetterId(), e);
+                return ;
+            }
+        }
+
+        //解析消息
+        PushMessageDTO pushMessageDTO = JSON.parseObject(deadLetterDTO.getJson(), PushMessageDTO.class);
+        MqMessageEnduring mqMessage=JSON.parseObject(pushMessageDTO.getJson(), MqMessageEnduring.class);
+
+        //调用方法重新包装并发送消息
+        handlerMessage(mqMessage,originMessageId,true);
+        log.info("WhisperMQ Broker 重新发送死信消息{}，死信原因：{}，死信次数：{}", deadLetterId, deadLetterDTO.getDeadType(),deadRetryCount);
     }
 
 

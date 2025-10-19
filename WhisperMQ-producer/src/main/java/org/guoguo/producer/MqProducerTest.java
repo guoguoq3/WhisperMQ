@@ -36,7 +36,7 @@ public class MqProducerTest {
 
         Thread thread1 = new Thread(() -> {
             try {
-                for (int i = 0; i < 100; i++) {
+                for (int i = 0; i < 10; i++) {
                     Thread.sleep(100);
                     MqMessageEnduring msg1 = new MqMessageEnduring();
                     msg1.setTopic("TEST_TOPIC");
@@ -58,12 +58,12 @@ public class MqProducerTest {
 
         Thread thread2 = new Thread(() -> {
             try {
-                for (int i = 0; i < 100; i++){
+                for (int i = 0; i < 5; i++){
                     Thread.sleep(100);
                     MqMessageEnduring msg2 = new MqMessageEnduring();
                     msg2.setTopic("TEST_TOPIC");
                     msg2.setTags(Arrays.asList("TAG1"));
-                    msg2.setPayload("组测试消息2");
+                    msg2.setPayload("测试错误信息");
                     Result<String> send2 = mqProducer2.send(msg2);
 
                     log.info("【生产者测试threa2】发送结果：{}，消息ID：{}", send2.getData(), send2.getMessageId());
@@ -79,13 +79,13 @@ public class MqProducerTest {
 
         Thread thread3 = new Thread(() -> {
             try {
-                for (int i = 0; i <=100; i++) {
+                for (int i = 0; i <=10; i++) {
                     Thread.sleep(100);
                     MqMessageEnduring msg3 = new MqMessageEnduring();
                     msg3.setTopic("TEST_TOPIC");
                     msg3.setTags(Arrays.asList("TAG1"));
                     msg3.setPayload("组测试消息3");
-                    Result<String> send3 = mqProducer3.send(msg3);
+                    Result<String> send3 = mqProducer2.send(msg3);
 
                     log.info("【生产者测试thread3】发送结果：{}，消息ID：{}", send3.getData(), send3.getMessageId());
                     if (send3.getCode()==200) {
@@ -98,6 +98,146 @@ public class MqProducerTest {
                 e.printStackTrace();
             }
         },"t3");
+        Thread thread4 = new Thread(() -> {
+            try {
+                for (int i = 0; i <=5; i++) {
+                    MqMessageEnduring msg3 = new MqMessageEnduring();
+                    msg3.setTopic("TEST_TOPIC");
+                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setPayload("组测试消息4");
+                    Result<String> send3 = mqProducer2.send(msg3);
+
+                    log.info("【生产者测试thread4】发送结果：{}，消息ID：{}", send3.getData(), send3.getMessageId());
+                    if (send3.getCode()==200) {
+                        log.info("【生产者测试thread4】消息发送成功");
+                    } else {
+                        log.error("【生产者测试thread4】消息发送失败");
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        },"t4");
+        Thread thread5 = new Thread(() -> {
+            try {
+                for (int i = 0; i <=5; i++) {
+                    MqMessageEnduring msg3 = new MqMessageEnduring();
+                    msg3.setTopic("TEST_TOPIC");
+                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setPayload("组测试消息5");
+                    Result<String> send3 = mqProducer3.send(msg3);
+
+                    log.info("【生产者测试thread5】发送结果：{}，消息ID：{}", send3.getData(), send3.getMessageId());
+                    if (send3.getCode()==200) {
+                        log.info("【生产者测试thread5】消息发送成功");
+                    } else {
+                        log.error("【生产者测试thread5】消息发送失败");
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        },"t5");
+        Thread thread6 = new Thread(() -> {
+            try {
+                for (int i = 0; i <=5; i++) {
+                    MqMessageEnduring msg3 = new MqMessageEnduring();
+                    msg3.setTopic("TEST_TOPIC");
+                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setPayload("组测试消息6");
+                    Result<String> send3 = mqProducer3.send(msg3);
+
+                    log.info("【生产者测试thread6】发送结果：{}，消息ID：{}", send3.getData(), send3.getMessageId());
+                    if (send3.getCode()==200) {
+                        log.info("【生产者测试thread6】消息发送成功");
+                    } else {
+                        log.error("【生产者测试thread6】消息发送失败");
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        },"t6");
+        Thread thread7 = new Thread(() -> {
+            try {
+                for (int i = 0; i <=5; i++) {
+                    MqMessageEnduring msg3 = new MqMessageEnduring();
+                    msg3.setTopic("TEST_TOPIC");
+                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setPayload("组测试消息7");
+                    Result<String> send3 = mqProducer3.send(msg3);
+
+                    log.info("【生产者测试thread7】发送结果：{}，消息ID：{}", send3.getData(), send3.getMessageId());
+                    if (send3.getCode()==200) {
+                        log.info("【生产者测试thread7】消息发送成功");
+                    } else {
+                        log.error("【生产者测试thread7】消息发送失败");
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        },"t7");
+        Thread thread8 = new Thread(() -> {
+            try {
+                for (int i = 0; i <=5; i++) {
+                    MqMessageEnduring msg3 = new MqMessageEnduring();
+                    msg3.setTopic("TEST_TOPIC");
+                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setPayload("组测试消息8");
+                    Result<String> send3 = mqProducer3.send(msg3);
+
+                    log.info("【生产者测试thread8】发送结果：{}，消息ID：{}", send3.getData(), send3.getMessageId());
+                    if (send3.getCode()==200) {
+                        log.info("【生产者测试thread8】消息发送成功");
+                    } else {
+                        log.error("【生产者测试thread8】消息发送失败");
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        },"t8");
+        Thread thread9 = new Thread(() -> {
+            try {
+                for (int i = 0; i <=5; i++) {
+                    MqMessageEnduring msg3 = new MqMessageEnduring();
+                    msg3.setTopic("TEST_TOPIC");
+                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setPayload("组测试消息9");
+                    Result<String> send3 = mqProducer3.send(msg3);
+
+                    log.info("【生产者测试thread9】发送结果：{}，消息ID：{}", send3.getData(), send3.getMessageId());
+                    if (send3.getCode()==200) {
+                        log.info("【生产者测试thread9】消息发送成功");
+                    } else {
+                        log.error("【生产者测试thread9】消息发送失败");
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        },"t9");
+        Thread thread10 = new Thread(() -> {
+            try {
+                for (int i = 0; i <=5; i++) {
+                    MqMessageEnduring msg3 = new MqMessageEnduring();
+                    msg3.setTopic("TEST_TOPIC");
+                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setPayload("组测试消息10");
+                    Result<String> send3 = mqProducer3.send(msg3);
+
+                    log.info("【生产者测试thread10】发送结果：{}，消息ID：{}", send3.getData(), send3.getMessageId());
+                    if (send3.getCode()==200) {
+                        log.info("【生产者测试thread10】消息发送成功");
+                    } else {
+                        log.error("【生产者测试thread10】消息发送失败");
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        },"t10");
 
         log.info("【生产者测试thread1】开始发送消息");
         thread1.start();
@@ -105,10 +245,33 @@ public class MqProducerTest {
         thread2.start();
         log.info("【生产者测试thread3】开始发送消息");
         thread3.start();
+        /*log.info("【生产者测试thread4】开始发送消息");
+        thread4.start();
+        log.info("【生产者测试thread5】开始发送消息");
+        thread5.start();
+        log.info("【生产者测试thread6】开始发送消息");
+        thread6.start();
+        log.info("【生产者测试thread7】开始发送消息");
+        thread7.start();
+        log.info("【生产者测试thread8】开始发送消息");
+        thread8.start();
+        log.info("【生产者测试thread9】开始发送消息");
+        thread9.start();
+        log.info("【生产者测试thread10】开始发送消息");
+        thread10.start();
+*/
         log.info("【生产者测试】等待所有线程执行完毕");
         thread1.join();
         thread2.join();
         thread3.join();
+        /*thread4.join();
+        thread5.join();
+        thread6.join();
+        thread7.join();
+        thread8.join();
+        thread9.join();
+        thread10.join();
+*/
         log.info("【生产者测试】所有线程执行完毕");
 
 
