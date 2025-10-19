@@ -5,6 +5,8 @@ import org.guoguo.common.constant.DeadType;
 import org.guoguo.common.pojo.Entity.FunctionEntity;
 import org.guoguo.common.util.SnowflakeIdGeneratorUtil;
 
+import java.time.LocalDateTime;
+
 /**
  * @author 荆锦硕
  * @date 2025年10月09日 12:08
@@ -18,7 +20,7 @@ public class DeadLetterDTO extends FunctionEntity {
     //死信类型
     private DeadType deadType;
     //死信产生时间戳
-    private Long deadTime;
+    private LocalDateTime deadTime;
     //死信重试次数
     private Integer deadRetryCount;
 
@@ -30,7 +32,7 @@ public class DeadLetterDTO extends FunctionEntity {
 
     public DeadLetterDTO() {
         this.deadLetterId = String.valueOf(SnowflakeIdGeneratorUtil.getInstance().nextId());
-        this.deadTime = System.currentTimeMillis();
+        this.deadTime = LocalDateTime.now();
         this.deadRetryCount = -1;
     }
 }

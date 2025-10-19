@@ -36,7 +36,7 @@ public class MqProducerTest {
 
         Thread thread1 = new Thread(() -> {
             try {
-                for (int i = 0; i < 10; i++) {
+                for (int i = 0; i < 100; i++) {
                     Thread.sleep(100);
                     MqMessageEnduring msg1 = new MqMessageEnduring();
                     msg1.setTopic("TEST_TOPIC");
@@ -58,7 +58,7 @@ public class MqProducerTest {
 
         Thread thread2 = new Thread(() -> {
             try {
-                for (int i = 0; i < 1; i++){
+                for (int i = 0; i < 5; i++){
                     Thread.sleep(100);
                     MqMessageEnduring msg2 = new MqMessageEnduring();
                     msg2.setTopic("TEST_TOPIC");
@@ -239,12 +239,12 @@ public class MqProducerTest {
             }
         },"t10");
 
-        //log.info("【生产者测试thread1】开始发送消息");
-        //thread1.start();
+        log.info("【生产者测试thread1】开始发送消息");
+        thread1.start();
         log.info("【生产者测试thread2】开始发送消息");
         thread2.start();
-        //log.info("【生产者测试thread3】开始发送消息");
-        //thread3.start();
+        log.info("【生产者测试thread3】开始发送消息");
+        thread3.start();
         /*log.info("【生产者测试thread4】开始发送消息");
         thread4.start();
         log.info("【生产者测试thread5】开始发送消息");
@@ -261,9 +261,9 @@ public class MqProducerTest {
         thread10.start();
 */
         log.info("【生产者测试】等待所有线程执行完毕");
-       // thread1.join();
+        thread1.join();
         thread2.join();
-       // thread3.join();
+        thread3.join();
         /*thread4.join();
         thread5.join();
         thread6.join();

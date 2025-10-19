@@ -207,6 +207,7 @@ public class BrokerManager {
                 log.info("WhisperMQ Broker 死信消息{}已存入死信队列，死信原因：{}", deadLetterId, deadLetterDTO.getDeadType());
                 deadLetterPersistUtil.writeDeadLetter(deadLetterDTO);
                 log.info("WhisperMQ Broker 死信消息{}已持久化", deadLetterId);
+                messageMap.remove(originMessageId);
                 return ;
             } catch (Exception e) {
                 log.error("处理死信消息时发生异常，消息ID: {}", deadLetterDTO.getDeadLetterId(), e);
