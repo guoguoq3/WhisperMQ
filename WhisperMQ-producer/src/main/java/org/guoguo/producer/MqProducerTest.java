@@ -36,7 +36,7 @@ public class MqProducerTest {
 
         Thread thread1 = new Thread(() -> {
             try {
-                for (int i = 0; i < 100; i++) {
+                for (int i = 0; i < 10; i++) {
                     Thread.sleep(100);
                     MqMessageEnduring msg1 = new MqMessageEnduring();
                     msg1.setTopic("TEST_TOPIC");
