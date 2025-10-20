@@ -19,7 +19,7 @@ public class MqConsumerHandler extends SimpleChannelInboundHandler<String> {
     // 仅依赖 MqConsumerManager（包含所有业务逻辑，无需依赖父类 MqConsumer）
    // private final MqConsumerManager mqConsumerManager;
 
-    private MqConsumer consumer;
+    private final MqConsumer consumer;
 
 
     // 注入 MqConsumerManager，移除对 MqConsumer 的冗余依赖

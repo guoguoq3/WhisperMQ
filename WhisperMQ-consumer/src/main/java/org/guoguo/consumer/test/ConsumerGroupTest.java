@@ -43,7 +43,7 @@ public class ConsumerGroupTest {
             @Override
             public boolean onMessage(MqMessage message,String messageId) {
                 log.info("【消费者组测试】收到消息：主题={}，内容={}，标签={}",
-                        message.getTopic(), message.getPayload(), message.getTags());
+                        message.getTopic(), message.getPayload(), message.getTag());
                 return true; // 处理成功，触发ACK
             }
 

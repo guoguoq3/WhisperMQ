@@ -8,7 +8,7 @@ public class MqMessage {
     /** 主题 */
     private String topic;
     /** 标签列表 */
-    private List<String> tags;
+    private String tag;
     /** 消息内容 */
     private String payload;
     /** 业务标识 */

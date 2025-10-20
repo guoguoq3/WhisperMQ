@@ -135,7 +135,6 @@ public class MqConsumerManager extends MqConsumer {
      * 处理Broker推送的消息（供Handler调用）
      */
     public boolean handlePushMessage(String messageId, String topic, MqMessage message) {
-        System.out.println(111111);
         System.out.println(topicListenerMap);
         IMessageListener listener = topicListenerMap.get(topic);
         if (listener == null) {

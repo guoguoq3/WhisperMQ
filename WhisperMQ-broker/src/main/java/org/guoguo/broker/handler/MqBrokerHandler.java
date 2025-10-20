@@ -101,7 +101,8 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
                 //处理消费者订阅消息并告知消费者消息已收到
                 case MethodType.GROUP_SUBSCRIBE:
                     SubscribeReqDTO subscribeReqDTO = JSON.parseObject(rpcDto.getJson(), SubscribeReqDTO.class);
-                    groupManager.GroupSubscribe(subscribeReqDTO);
+                    //解析通道信息获取消费者id，后续使用这个id来获取消费者tag信息
+                    groupManager.GroupSubscribe(subscribeReqDTO,ctx);
                     //前面是消费者消息回溯 这里回溯完返回订阅响应结果
                     sendSuccessResponse(ctx,traceId);
                     break;

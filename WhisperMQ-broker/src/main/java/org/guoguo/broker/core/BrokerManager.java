@@ -27,6 +27,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
+
 @Slf4j
 @Component
 public class BrokerManager {
@@ -99,17 +101,32 @@ public class BrokerManager {
 
 
     /**
-     * 向消费者组推送消息（组内负载均衡：轮询分配给在线消费者）
+     * 向消费者组推送消息（基于Tag筛选消费者，组内负载均衡）
      */
     public void pushMessageToGroup(ConsumerGroup group, String messageId, MqMessage message,Boolean isRetry) {
         String groupId = group.getGroupId();
         String topic = message.getTopic();
-        Map<String, Channel> onlineConsumers = group.getOnlineConsumers();
+        String messageTag = message.getTag();
 
+        //获取组内在线消费者
+        Map<String, Channel> onlineConsumers = group.getOnlineConsumers();
         if (onlineConsumers.isEmpty()){
             log.info("WhisperMQ Broker 无消费者组订阅主题{}，消息{}暂不推送", topic, messageId);
             return;
         }
+
+        // 2. 筛选订阅了该消息Tag的在线消费者
+        List<String> candidateConsumers = group.getConsumersByTopicAndTag(topic, messageTag);
+        // 仅保留在线的消费者
+        List<String> onlineCandidates = candidateConsumers.stream()
+                .filter(onlineConsumers::containsKey)
+                .toList();
+        if (onlineCandidates.isEmpty()) {
+            log.info("WhisperMQ Broker 消费者组{}无订阅Tag:{}的在线消费者，消息{}暂不推送",
+                    groupId, messageTag, messageId);
+            return;
+        }
+        // 3. 判断是否是死信重试消息
         if(!isRetry){
             // 检查组的消费位点：只推送位点之后的消息
             String groupOffset = group.getTopicOffsetMap().get(topic);
@@ -118,13 +135,12 @@ public class BrokerManager {
                 return;
             }
         }
-
-
+        // 4. 在符合条件的消费者中进行负载均衡（轮询）
         //组内负载均衡：轮询选择一个消费者（简化实现）
-        List<String> consumerIds = new ArrayList<>(onlineConsumers.keySet());
+        //List<String> consumerIds = new ArrayList<>(onlineConsumers.keySet());
         // 按消息ID取模，确保同消息分配给同消费者
-        int index = (int) (Long.parseLong(messageId) % consumerIds.size());
-        String targetConsumerId = consumerIds.get(index);
+        int index = (int) (Long.parseLong(messageId) % onlineCandidates.size());
+        String targetConsumerId = onlineCandidates.get(index);
         Channel targetChannel = onlineConsumers.get(targetConsumerId);
 
         //检查该消费者是否已确认过此消息（避免重复推送）

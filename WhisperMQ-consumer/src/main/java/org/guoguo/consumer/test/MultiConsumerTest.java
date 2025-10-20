@@ -12,6 +12,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -48,17 +49,17 @@ public class MultiConsumerTest {
         consumer1.joinGroup("ORDER_GROUP");
         SubscribeReqDTO req1 = new SubscribeReqDTO();
         req1.setTopic("TEST_TOPIC");
-        req1.setTags(Arrays.asList("TAG1"));
+        req1.setTags(List.of("*"));
         req1.setGroupId("ORDER_GROUP");
         consumer1.groupSubscribe(req1, new IMessageListener() {
             @Override
             public boolean onMessage(MqMessage message, String messageId) {
                 log.info("【同组-消费者1】收到消息 | 组：ORDER_GROUP | 主题：{} | 内容：{} | 标签：{}",
-                        message.getTopic(), message.getPayload(), message.getTags());
+                        message.getTopic(), message.getPayload(), message.getTag());
                 if(message.getPayload().equals("测试错误信息")){
                     //拒绝消息
                     log.info("【同组-消费者1】拒绝消息(重试) | 组：ORDER_GROUP | 主题：{} | 内容：{} | 标签：{} | 消息ID：{}",
-                            message.getTopic(),message.getPayload(),message.getTags(),messageId);
+                            message.getTopic(),message.getPayload(),message.getTag(),messageId);
                     consumer1.reject(message, messageId, DeadType.CONSUME_TIMEOUT, true);//-------------------------
                     return false;
                 }
@@ -71,17 +72,17 @@ public class MultiConsumerTest {
         consumer2.joinGroup("ORDER_GROUP");
         SubscribeReqDTO req2 = new SubscribeReqDTO();
         req2.setTopic("TEST_TOPIC");
-        req2.setTags(Arrays.asList("TAG1"));
+        req2.setTags(List.of( "*"));
         req2.setGroupId("ORDER_GROUP");
         consumer2.groupSubscribe(req2, new IMessageListener() {
             @Override
             public boolean onMessage(MqMessage message, String messageId) {
                 log.info("【同组-消费者2】收到消息 | 组：ORDER_GROUP | 主题：{} | 内容：{} | 标签：{}",
-                        message.getTopic(), message.getPayload(), message.getTags());
+                        message.getTopic(), message.getPayload(), message.getTag());
                 if(message.getPayload().equals("测试错误信息")){
                     //拒绝消息
                     log.info("【同组-消费者2】拒绝消息(重试) | 组：ORDER_GROUP | 主题：{} | 内容：{} | 标签：{} | 消息ID：{}",
-                            message.getTopic(),message.getPayload(),message.getTags(),messageId);
+                            message.getTopic(),message.getPayload(),message.getTag(),messageId);
                     consumer2.reject(message, messageId, DeadType.CONSUME_TIMEOUT, true);//-------------------------
                     return false;
                 }
@@ -111,12 +112,12 @@ public class MultiConsumerTest {
         consumer1.joinGroup("ORDER_GROUP");
         SubscribeReqDTO req1 = new SubscribeReqDTO();
         req1.setTopic("TEST_TOPIC");
-        req1.setTags(Arrays.asList("TAG1"));
+        req1.setTags(List.of("TAG1"));
         consumer1.groupSubscribe(req1, new IMessageListener() {
             @Override
             public boolean onMessage(MqMessage message, String messageId) {
                 log.info("【不同组-消费者1】收到消息 | 组：ORDER_GROUP | 主题：{} | 内容：{} | 消息标签：{} | 消息ID：{}",
-                        message.getTopic(), message.getPayload(), message.getTags(), messageId);
+                        message.getTopic(), message.getPayload(), message.getTag(), messageId);
                 return true;
             }
         });
@@ -126,7 +127,7 @@ public class MultiConsumerTest {
         consumer2.joinGroup("PAY_GROUP");
         SubscribeReqDTO req2 = new SubscribeReqDTO();
         req2.setTopic("TEST_TOPIC");
-        req2.setTags(Arrays.asList("TAG1"));
+        req2.setTags(List.of("TAG1"));
         consumer2.groupSubscribe(req2, new IMessageListener() {
           /*  @Override
             public boolean onMessage(MqMessage message) {
@@ -138,7 +139,7 @@ public class MultiConsumerTest {
             @Override
             public boolean onMessage(MqMessage message, String messageId) {
                 log.info("【不同组-消费者2】收到消息 | 组：PAY_GROUP | 主题：{} | 内容：{} | 标签列表：{} | 消息ID：{}",
-                        message.getTopic(), message.getPayload(), message.getTags(), messageId);
+                        message.getTopic(), message.getPayload(), message.getTag(), messageId);
                 if(message.getPayload().equals("测试错误信息")){
                     //拒绝消息
                     consumer2.reject(message, messageId, DeadType.CONSUME_TIMEOUT, true);//-------------------------

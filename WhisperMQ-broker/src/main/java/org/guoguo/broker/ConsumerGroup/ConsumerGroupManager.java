@@ -1,6 +1,7 @@
 package org.guoguo.broker.ConsumerGroup;
 
 import io.micrometer.common.util.StringUtils;
+import io.netty.channel.ChannelHandlerContext;
 import lombok.Data;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -87,7 +88,7 @@ public class ConsumerGroupManager {
     }
 
     //消费者订阅主题  其实直接调用这个方法调用就行不必再创建消费者组
-    public void GroupSubscribe(SubscribeReqDTO subscribeReqDTO) {
+    public void GroupSubscribe(SubscribeReqDTO subscribeReqDTO, ChannelHandlerContext ctx) {
         //检查subscribeReqDTO是否为null
         if (subscribeReqDTO == null) {
             log.error("SubscribeReqDTO is null");
@@ -128,18 +129,23 @@ public class ConsumerGroupManager {
         String lastOffset = consumerGroup.getTopicOffsetMap().get(topic);
         if (lastOffset == null){
            log.info("WhisperMQ Broker 组{}订阅主题{}：无历史位点，位点为最新的消息", groupId, topic);
-            consumerGroup.addSubscribe(subscribeReqDTO);
+            consumerGroup.addSubscribe(subscribeReqDTO,ctx);
        }else {
 
         //记录组的订阅关系
-        consumerGroup.addSubscribe(subscribeReqDTO);
+        consumerGroup.addSubscribe(subscribeReqDTO,ctx);
         log.info("WhisperMQ Broker 消费者组{}订阅主题{}（标签：{}）",
                 subscribeReqDTO.getGroupId(), topic, subscribeReqDTO.getTags());
 
            //获取在消费者位点之后的消息 两个条件一个是大于lastOffset 一个是topic相同  todo：可能还会有tag的事情
-            System.out.println(brokerManager.getMessageMap());
+            //System.out.println(brokerManager.getMessageMap());
             List<Map.Entry<String, MqMessage>> filteredMessagesStream = brokerManager.getMessageMap().entrySet().stream()
                     .filter(entry -> topic.equals(entry.getValue().getTopic())) // 主题匹配
+                    .filter(entry -> {
+                        String messageTag = entry.getValue().getTag();
+                        // 支持通配符或具体标签匹配
+                        return "*".equals(messageTag) || subscribeReqDTO.getTags().contains(messageTag);
+                    })
                     .filter(entry -> Long.parseLong(entry.getKey()) > Long.parseLong(lastOffset)) // ID大于lastOffset
                     .toList();
 
@@ -167,6 +173,21 @@ public class ConsumerGroupManager {
         }
         ConsumerGroup consumerGroup = getOrCreateConsumerGroup(groupId);
         consumerGroup.addConsumer(consumerId, channel);
+
+        // 新增：为该消费者初始化其在组内已订阅主题的Tag信息
+        // （假设消费者订阅的Tag在SubscribeReqDTO中，此处需根据实际业务获取消费者的Tag列表）
+        // 注：实际场景中，消费者加入时应携带其订阅的Tag，此处简化为从组的订阅关系中获取默认Tag
+        for (Map.Entry<String, SubscribeReqDTO> entry : consumerGroup.getSubscribeMap().entrySet()) {
+            String topic = entry.getKey();
+            SubscribeReqDTO subscribeReq = entry.getValue();
+            // 组订阅的Tag（实际应替换为消费者个人订阅的Tag）
+            List<String> tags = subscribeReq.getTags();
+            consumerGroup.addConsumerTopicTags(topic, consumerId, tags);
+            log.info("WhisperMQ Broker 消费者{}加入组{}，订阅主题{}的Tag：{}",
+                    consumerId, groupId, topic, tags);
+        }
+
+
     }
 
 
@@ -208,6 +229,7 @@ public class ConsumerGroupManager {
             return;
         }
         consumerGroup.removeConsumer(consumerId);
+        consumerGroup.removeConsumerTags(consumerId); // 清理Tag订阅
         log.info("WhisperMQ Broker 消费者{}离开组{}，当前组内在线消费者数：{}",
                 consumerId, groupId, consumerGroup.getOnlineConsumers().size());
         // 组内无消费者时，自动销毁组（可选：也可保留组配置）
