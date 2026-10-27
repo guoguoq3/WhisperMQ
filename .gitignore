@@ -37,3 +37,8 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+### WhisperMQ runtime data (generated on startup) ###
+WhisperMQ-data/
+WhisperMQ-offset/
+.dsh-acl-recovery/

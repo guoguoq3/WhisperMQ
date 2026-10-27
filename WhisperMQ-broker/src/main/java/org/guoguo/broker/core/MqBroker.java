@@ -10,91 +10,96 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.DelimiterBasedFrameDecoder;
 import io.netty.handler.codec.string.StringDecoder;
 import io.netty.handler.codec.string.StringEncoder;
+import io.netty.handler.timeout.IdleStateHandler;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
-import org.guoguo.broker.ConsumerGroup.ConsumerGroupManager;
 import org.guoguo.broker.handler.MqBrokerHandler;
 import org.guoguo.broker.util.FilePersistUtil;
-import org.guoguo.broker.util.OffsetPersistUtil;
 import org.guoguo.common.config.MqConfigProperties;
-import org.guoguo.common.pojo.Entity.MqMessage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 
+/**
+ * Broker 网络入口。
+ *
+ * <p>P0 改造点：启动不再阻塞 Spring 容器线程。
+ * 旧实现把 {@code closeFuture().sync()} 写在 {@code @PostConstruct} 里，导致
+ * ApplicationContext.refresh() 永远无法返回：ApplicationReadyEvent 不触发，
+ * MqBroker 之后定义的 Bean 不会初始化，容器生命周期（优雅关闭、健康检查）全部失效。</p>
+ */
 @Slf4j
 @Component // 交给 Spring 管理
 public class MqBroker {
     private final MqConfigProperties config;
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
-    private FilePersistUtil filePersistUtil;
-
-
-
-   private final MqBrokerHandler mqBrokerHandler;
-//   private final OffsetPersistUtil offsetPersistUtil;
-
+    private Channel serverChannel;
+    // 保留该依赖：确保 FilePersistUtil 先于 Broker 完成历史消息恢复（@PostConstruct 顺序）
+    private final FilePersistUtil filePersistUtil;
+    private final MqBrokerHandler mqBrokerHandler;
 
     // 构造器注入配置
     @Autowired
-    public MqBroker(MqConfigProperties config, MqBrokerHandler mqBrokerHandler,BrokerManager brokerManager, FilePersistUtil filePersistUtil) {
+    public MqBroker(MqConfigProperties config, MqBrokerHandler mqBrokerHandler,
+                    FilePersistUtil filePersistUtil) {
         this.config = config;
-        this.mqBrokerHandler=mqBrokerHandler;
-        this.filePersistUtil=filePersistUtil;
-//        this.offsetPersistUtil=offsetPersistUtil;
-
+        this.mqBrokerHandler = mqBrokerHandler;
+        this.filePersistUtil = filePersistUtil;
     }
 
-    // 启动时自动执行（初始化 Netty 服务）
+    // 启动时自动执行（初始化 Netty 服务），非阻塞
     @PostConstruct
     public void start() throws InterruptedException {
-        System.out.println(222222);
-        //需要时创建
-        bossGroup = new NioEventLoopGroup();
+        bossGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup();
 
-        try {
-            ServerBootstrap bootstrap = new ServerBootstrap();
-            bootstrap.group(bossGroup, workerGroup)
-                    .channel(NioServerSocketChannel.class)
-                    .childHandler(new ChannelInitializer<Channel>() {
+        // 连接空闲检测：客户端每 heartbeatIntervalMillis 发一次心跳，
+        // 这里按 3 个心跳周期判定读空闲，清理半开/僵尸连接。
+        int readerIdleSeconds = (int) Math.max(5, config.getHeartbeatIntervalMillis() * 3 / 1000);
 
-                        @Override
-                        protected void initChannel(Channel channel) {
-                            // 1. 添加分隔符处理器：以换行符 \n 作为消息结束标志
-                            // 最大帧长度 1024*1024（1MB），超过则抛异常
-                            ByteBuf delimiter = Unpooled.copiedBuffer("\n".getBytes());
-                            channel.pipeline()
-                                    .addLast(new DelimiterBasedFrameDecoder(1024 * 1024, delimiter))
-                                    .addLast(new StringDecoder())
-                                    .addLast(new StringEncoder())
-                                    .addLast(mqBrokerHandler);
-                        }
-                    })
-                    .option(ChannelOption.SO_BACKLOG, 128)
-                    .childOption(ChannelOption.SO_KEEPALIVE, true);
+        ServerBootstrap bootstrap = new ServerBootstrap();
+        bootstrap.group(bossGroup, workerGroup)
+                .channel(NioServerSocketChannel.class)
+                .childHandler(new ChannelInitializer<Channel>() {
+                    @Override
+                    protected void initChannel(Channel channel) {
+                        // 1. 分隔符处理器：以换行符 \n 作为消息结束标志，最大帧 1MB
+                        ByteBuf delimiter = Unpooled.copiedBuffer("\n".getBytes(StandardCharsets.UTF_8));
+                        channel.pipeline()
+                                .addLast(new IdleStateHandler(readerIdleSeconds, 0, 0, TimeUnit.SECONDS))
+                                .addLast(new DelimiterBasedFrameDecoder(1024 * 1024, delimiter))
+                                .addLast(new StringDecoder())
+                                .addLast(new StringEncoder())
+                                .addLast(mqBrokerHandler);
+                    }
+                })
+                .option(ChannelOption.SO_BACKLOG, 128)
+                .childOption(ChannelOption.SO_KEEPALIVE, true)
+                .childOption(ChannelOption.TCP_NODELAY, true);
 
-            // 从配置中获取端口
-            ChannelFuture future = bootstrap.bind(config.getBrokerPort()).sync();
-            log.info("Broker 启动成功，监听端口: {}", config.getBrokerPort());
-            future.channel().closeFuture().sync();
-        } finally {
-            workerGroup.shutdownGracefully();
-            bossGroup.shutdownGracefully();
-        }
+        // 绑定端口后立即返回，由 Netty 自己的 EventLoop 提供服务
+        serverChannel = bootstrap.bind(config.getBrokerPort()).sync().channel();
+        log.info("Broker 启动成功，监听端口: {}（已异步启动，Spring 容器可正常完成 refresh）",
+                config.getBrokerPort());
     }
 
-    // 销毁时关闭资源
+    // 销毁时关闭资源（现在能真正被 Spring 调用了）
     @PreDestroy
     public void stop() {
-        if (bossGroup != null) bossGroup.shutdownGracefully();
-        if (workerGroup != null) workerGroup.shutdownGracefully();
-//        offsetPersistUtil.close();
+        log.info("Broker 开始关闭");
+        if (serverChannel != null) {
+            serverChannel.close();
+        }
+        if (workerGroup != null) {
+            workerGroup.shutdownGracefully();
+        }
+        if (bossGroup != null) {
+            bossGroup.shutdownGracefully();
+        }
         log.info("Broker 已关闭");
     }
 }

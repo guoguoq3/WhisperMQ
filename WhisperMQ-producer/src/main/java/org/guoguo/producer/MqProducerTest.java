@@ -36,11 +36,11 @@ public class MqProducerTest {
 
         Thread thread1 = new Thread(() -> {
             try {
-                for (int i = 0; i < 10; i++) {
+                for (int i = 0; i < 5; i++) {
                     Thread.sleep(100);
                     MqMessageEnduring msg1 = new MqMessageEnduring();
                     msg1.setTopic("TEST_TOPIC");
-                    msg1.setTags(Arrays.asList("TAG1"));
+                    msg1.setTag("TAG1");
                     msg1.setPayload("组测试消息1");
                     Result<String> send1 = mqProducer1.send(msg1);
 
@@ -58,12 +58,12 @@ public class MqProducerTest {
 
         Thread thread2 = new Thread(() -> {
             try {
-                for (int i = 0; i < 5; i++){
+                for (int i = 0; i < 3; i++){
                     Thread.sleep(100);
                     MqMessageEnduring msg2 = new MqMessageEnduring();
                     msg2.setTopic("TEST_TOPIC");
-                    msg2.setTags(Arrays.asList("TAG1"));
-                    msg2.setPayload("测试错误信息");
+                    msg2.setTag("TAG1");
+                    msg2.setPayload("测试错误信息null");
                     Result<String> send2 = mqProducer2.send(msg2);
 
                     log.info("【生产者测试threa2】发送结果：{}，消息ID：{}", send2.getData(), send2.getMessageId());
@@ -79,11 +79,11 @@ public class MqProducerTest {
 
         Thread thread3 = new Thread(() -> {
             try {
-                for (int i = 0; i <=10; i++) {
+                for (int i = 0; i <=5; i++) {
                     Thread.sleep(100);
                     MqMessageEnduring msg3 = new MqMessageEnduring();
                     msg3.setTopic("TEST_TOPIC");
-                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setTag("TAG1");
                     msg3.setPayload("组测试消息3");
                     Result<String> send3 = mqProducer2.send(msg3);
 
@@ -103,7 +103,7 @@ public class MqProducerTest {
                 for (int i = 0; i <=5; i++) {
                     MqMessageEnduring msg3 = new MqMessageEnduring();
                     msg3.setTopic("TEST_TOPIC");
-                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setTag("TAG1");
                     msg3.setPayload("组测试消息4");
                     Result<String> send3 = mqProducer2.send(msg3);
 
@@ -123,7 +123,7 @@ public class MqProducerTest {
                 for (int i = 0; i <=5; i++) {
                     MqMessageEnduring msg3 = new MqMessageEnduring();
                     msg3.setTopic("TEST_TOPIC");
-                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setTag("TAG1");
                     msg3.setPayload("组测试消息5");
                     Result<String> send3 = mqProducer3.send(msg3);
 
@@ -143,7 +143,7 @@ public class MqProducerTest {
                 for (int i = 0; i <=5; i++) {
                     MqMessageEnduring msg3 = new MqMessageEnduring();
                     msg3.setTopic("TEST_TOPIC");
-                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setTag("TAG1");
                     msg3.setPayload("组测试消息6");
                     Result<String> send3 = mqProducer3.send(msg3);
 
@@ -163,7 +163,7 @@ public class MqProducerTest {
                 for (int i = 0; i <=5; i++) {
                     MqMessageEnduring msg3 = new MqMessageEnduring();
                     msg3.setTopic("TEST_TOPIC");
-                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setTag("TAG1");
                     msg3.setPayload("组测试消息7");
                     Result<String> send3 = mqProducer3.send(msg3);
 
@@ -183,7 +183,7 @@ public class MqProducerTest {
                 for (int i = 0; i <=5; i++) {
                     MqMessageEnduring msg3 = new MqMessageEnduring();
                     msg3.setTopic("TEST_TOPIC");
-                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setTag("TAG1");
                     msg3.setPayload("组测试消息8");
                     Result<String> send3 = mqProducer3.send(msg3);
 
@@ -203,7 +203,7 @@ public class MqProducerTest {
                 for (int i = 0; i <=5; i++) {
                     MqMessageEnduring msg3 = new MqMessageEnduring();
                     msg3.setTopic("TEST_TOPIC");
-                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setTag("TAG1");
                     msg3.setPayload("组测试消息9");
                     Result<String> send3 = mqProducer3.send(msg3);
 
@@ -223,7 +223,7 @@ public class MqProducerTest {
                 for (int i = 0; i <=5; i++) {
                     MqMessageEnduring msg3 = new MqMessageEnduring();
                     msg3.setTopic("TEST_TOPIC");
-                    msg3.setTags(Arrays.asList("TAG1"));
+                    msg3.setTag("TAG1");
                     msg3.setPayload("组测试消息10");
                     Result<String> send3 = mqProducer3.send(msg3);
 

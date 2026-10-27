@@ -65,8 +65,50 @@ public class DeadLetterQueue {
     public DeadLetterDTO get() {
         // 队列的peek()是线程安全的，直接获取队首ID
         String firstId = deadLetterIdQueue.peek();
+        // 修复：ConcurrentHashMap.get(null) 会抛 NPE，队列为空时必须先判空
+        if (firstId == null) {
+            return null;
+        }
         // Map的get()是线程安全的，根据ID查询实体
         return deadLetterMap.get(firstId);
+    }
+
+    /**
+     * 按 ID 原子移除（重放时用：谁移除成功谁负责重放，避免并发重放同一条死信）
+     *
+     * @return 被移除的死信，不存在或已被移除时返回 null
+     */
+    public DeadLetterDTO removeById(String deadLetterId) {
+        if (deadLetterId == null) {
+            return null;
+        }
+        lock.lock();
+        try {
+            DeadLetterDTO removed = deadLetterMap.remove(deadLetterId);
+            if (removed != null) {
+                deadLetterIdQueue.remove(deadLetterId);
+            }
+            return removed;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** 当前积压的死信快照（按入队顺序） */
+    public java.util.List<DeadLetterDTO> list() {
+        java.util.List<DeadLetterDTO> result = new java.util.ArrayList<>();
+        for (String id : deadLetterIdQueue) {
+            DeadLetterDTO dto = deadLetterMap.get(id);
+            if (dto != null) {
+                result.add(dto);
+            }
+        }
+        return result;
+    }
+
+    /** 当前积压数量 */
+    public int size() {
+        return deadLetterMap.size();
     }
 
     /**
