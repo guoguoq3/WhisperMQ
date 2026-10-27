@@ -97,7 +97,6 @@ public class FilePersistUtil {
      * 死信消息后按行读取持久化消息文件并修改状态字段
      */
     public synchronized void updateDeadLetterMessageStatus(String messageId) {
-        System.out.println(5454);
         try (RandomAccessFile raf = new RandomAccessFile(currentPersistFile, "rw")) {
             long fileLength = raf.length();
             if (fileLength == 0) return;

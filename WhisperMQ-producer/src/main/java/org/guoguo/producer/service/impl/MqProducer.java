@@ -8,12 +8,14 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.DelimiterBasedFrameDecoder;
 import io.netty.handler.codec.string.StringDecoder;
 import io.netty.handler.codec.string.StringEncoder;
+import io.netty.handler.timeout.IdleStateHandler;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -28,22 +30,45 @@ import org.guoguo.producer.constant.ResultCodeEnum;
 import org.guoguo.producer.handler.MqProducerHandler;
 import org.guoguo.producer.pojo.Result;
 
-import org.guoguo.common.util.SnowflakeIdGeneratorUtil;
 import org.guoguo.producer.service.IMqProducer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * 生产者客户端。
+ *
+ * <p>P0 改造点：
+ * <ol>
+ *   <li>连接断开后按指数退避自动重连（旧实现只在 @PostConstruct 连一次）；</li>
+ *   <li>连接不可用时快速失败并返回明确的 Result，而不是抛 NPE 被 catch 吞掉；</li>
+ *   <li>增加写空闲心跳，配合 Broker 的读空闲检测清理半开连接；</li>
+ *   <li>Broker 返回 ERROR 时立即失败并返回原因，不再空等到超时。</li>
+ * </ol>
+ */
 @Slf4j
 @Component // 交给 Spring 管理
 public class MqProducer implements IMqProducer {
     private final MqConfigProperties config;
-    private Channel channel;
+    private volatile Channel channel;
     private EventLoopGroup group;
+    private Bootstrap bootstrap;
+
+    private final ScheduledExecutorService reconnectScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread thread = new Thread(r, "producer-reconnect");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final AtomicInteger reconnectAttempt = new AtomicInteger(0);
+    private volatile boolean closed = false;
+    private volatile boolean reconnectScheduled = false;
 
     // 注入配置
     @Autowired
@@ -54,156 +79,194 @@ public class MqProducer implements IMqProducer {
     // 初始化时连接 Broker
     @PostConstruct
     public void start() {
-        group = new NioEventLoopGroup();
-        try {
-            Bootstrap bootstrap = new Bootstrap();
-            bootstrap.group(group)
-                    .channel(NioSocketChannel.class)
-                    .handler(new ChannelInitializer<>() {
-                        @Override
-                        protected void initChannel(Channel ch) {
-                            // 1. 添加分隔符处理器：以换行符 \n 作为消息结束标志
-                            // 最大帧长度 1024*1024（1MB），超过则抛异常
-                            ByteBuf delimiter = Unpooled.copiedBuffer("\n".getBytes());
-                            ch.pipeline()
-                                    .addLast(new DelimiterBasedFrameDecoder(1024 * 1024, delimiter))
-                                    .addLast(new StringDecoder())
-                                    .addLast(new StringEncoder())
-                                    .addLast(new MqProducerHandler(MqProducer.this));
-                        }
-                    });
+        group = new NioEventLoopGroup(1);
+        bootstrap = new Bootstrap();
+        bootstrap.group(group)
+                .channel(NioSocketChannel.class)
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 3000)
+                .option(ChannelOption.TCP_NODELAY, true)
+                .handler(new ChannelInitializer<Channel>() {
+                    @Override
+                    protected void initChannel(Channel ch) {
+                        ByteBuf delimiter = Unpooled.copiedBuffer("\n".getBytes(StandardCharsets.UTF_8));
+                        ch.pipeline()
+                                .addLast(new IdleStateHandler(0,
+                                        (int) Math.max(1, config.getHeartbeatIntervalMillis() / 1000), 0,
+                                        TimeUnit.SECONDS))
+                                .addLast(new DelimiterBasedFrameDecoder(1024 * 1024, delimiter))
+                                .addLast(new StringDecoder())
+                                .addLast(new StringEncoder())
+                                .addLast(new MqProducerHandler(MqProducer.this));
+                    }
+                });
+        connectBlocking();
+    }
 
-            // 从配置中获取 Broker 地址和端口
+    /** 首次连接：保持同步语义（启动后即可发送），失败则进入后台重连 */
+    private void connectBlocking() {
+        try {
             ChannelFuture future = bootstrap.connect(config.getBrokerHost(), config.getBrokerPort()).sync();
             this.channel = future.channel();
+            reconnectAttempt.set(0);
             log.info("生产者连接 Broker 成功：{}:{}", config.getBrokerHost(), config.getBrokerPort());
+            watchClose(future.channel());
         } catch (Exception e) {
-            log.error("生产者连接 Broker 失败", e);
+            log.error("生产者连接 Broker 失败：{}:{}，将进入自动重连",
+                    config.getBrokerHost(), config.getBrokerPort(), e);
+            scheduleReconnect();
         }
     }
 
+    /** 连接关闭后统一从这里触发重连（channelInactive 与 closeFuture 只保留这一条路径，避免重复连接） */
+    private void watchClose(Channel ch) {
+        ch.closeFuture().addListener(f -> {
+            if (!closed) {
+                log.warn("生产者与 Broker 的连接已断开，准备重连");
+                channel = null;
+                scheduleReconnect();
+            }
+        });
+    }
 
-    /*//使用ConcurrentHashMap存储traceId与latch等待器的映射
-    private final ConcurrentHashMap<String, CountDownLatch> traceIdLatchMap = new ConcurrentHashMap<>();*/
+    private void scheduleReconnect() {
+        if (closed || reconnectScheduled) {
+            return;
+        }
+        reconnectScheduled = true;
+        long delay = nextDelay();
+        log.warn("生产者将在 {}ms 后尝试第 {} 次重连 Broker", delay, reconnectAttempt.get() + 1);
+        reconnectScheduler.schedule(this::reconnect, delay, TimeUnit.MILLISECONDS);
+    }
 
-    // 存储结构改为：traceId -> 带版本的Latch
+    private long nextDelay() {
+        long initial = Math.max(200, config.getReconnectInitialDelayMillis());
+        long max = Math.max(initial, config.getReconnectMaxDelayMillis());
+        int attempt = Math.min(reconnectAttempt.getAndIncrement(), 10);
+        return Math.min(max, initial * (1L << attempt));
+    }
+
+    private void reconnect() {
+        reconnectScheduled = false;
+        if (closed || (channel != null && channel.isActive())) {
+            return;
+        }
+        log.info("生产者尝试重连 Broker：{}:{}", config.getBrokerHost(), config.getBrokerPort());
+        bootstrap.connect(config.getBrokerHost(), config.getBrokerPort()).addListener((ChannelFuture f) -> {
+            if (f.isSuccess()) {
+                this.channel = f.channel();
+                reconnectAttempt.set(0);
+                log.info("生产者重连 Broker 成功：{}:{}", config.getBrokerHost(), config.getBrokerPort());
+                watchClose(f.channel());
+            } else {
+                log.warn("生产者重连 Broker 失败：{}", f.cause() == null ? "unknown" : f.cause().getMessage());
+                scheduleReconnect();
+            }
+        });
+    }
+
+    // 存储结构：traceId -> 带版本的Latch
     private final ConcurrentHashMap<String, VersionedLatch> traceIdLatchMap = new ConcurrentHashMap<>();
 
-    //使用AckConfirmHashMap存储生产者已被确认的消息
-    private final ConcurrentHashMap<String,MqMessageEnduring> ackConfirmHashMap = new ConcurrentHashMap<>();
+    // Broker 明确返回 ERROR 时，按 traceId 记录失败原因，让 send() 立即失败
+    private final ConcurrentHashMap<String, String> traceIdErrorMap = new ConcurrentHashMap<>();
 
     @Override
     //使用MqMessageEnduring类封装MqMessage消息实体类，添加持久化选择字段
     public Result<String> send(MqMessageEnduring message) {
+        //封装消息功能层DTO
+        ProducerMessageDTO producerMessageDTO = new ProducerMessageDTO();
+        producerMessageDTO.setJson(JSON.toJSONString(message));
+        //为每个消息通过雪花算法创建独立id
+        String traceId = producerMessageDTO.getMessageId();
+
+        Channel currentChannel = this.channel;
+        if (currentChannel == null || !currentChannel.isActive()) {
+            log.warn("生产者发送失败：与 Broker 的连接不可用，消息ID：{}", traceId);
+            return Result.build("消息发送失败：Broker 未连接", ResultCodeEnum.FAILED, traceId);
+        }
+
+        RpcMessageDTO rpcMessageDTO = new RpcMessageDTO();
+        rpcMessageDTO.setRequest(true);
+        rpcMessageDTO.setMethodType(MethodType.P_SEND_MSG);
+
         try {
-            //封装消息功能层DTO
-            ProducerMessageDTO producerMessageDTO = new ProducerMessageDTO();
-            producerMessageDTO.setJson(JSON.toJSONString(message));
-            //为每个消息通过雪花算法创建独立id
-            String currentTraceId = producerMessageDTO.getMessageId();
-            RpcMessageDTO rpcMessageDTO = new RpcMessageDTO();
-            rpcMessageDTO.setRequest(true);
-            rpcMessageDTO.setMethodType(MethodType.P_SEND_MSG);
-
-            boolean await;
             //超时重传机制
-            for (long i = 0; i <= config.getProducerRetryCountLimit(); i++){
-
-                long startTime = System.currentTimeMillis();
-                // 为每个消息创建独立的等待器
+            for (long i = 0; i <= config.getProducerRetryCountLimit(); i++) {
+                // 为每次尝试创建独立等待器，避免旧版本信号串扰
                 VersionedLatch latch = new VersionedLatch(1);
-                //获得此等待器版本
                 long currentVersion = latch.getVersion();
-                //设置并封装当前消息版本，使得返回确认消息时携带
                 producerMessageDTO.setCurrentVersion(currentVersion);
                 rpcMessageDTO.setJson(JSON.toJSONString(producerMessageDTO));
-                // 使用ConcurrentHashMap存储traceId与latch的映射
-                traceIdLatchMap.put(currentTraceId, latch);
-                // 发送消息
-                channel.writeAndFlush(JSON.toJSONString(rpcMessageDTO) + "\n");
-                // 等待确认或超时
-                log.info("等待生产者发送消息，重试次数为：{}，消息Id：{}",i,currentTraceId);
-                await = latch.await((long) (config.getProducerRetryTimeCoefficient()*Math.pow(2L,i)), TimeUnit.MILLISECONDS);
-                // 5. 校验唤醒是否有效（必须是当前版本的latch被唤醒）
-                VersionedLatch storedLatch = traceIdLatchMap.get(currentTraceId);
+                traceIdLatchMap.put(traceId, latch);
+                traceIdErrorMap.remove(traceId);
 
+                long waitMillis = (long) (config.getProducerRetryTimeCoefficient() * Math.pow(2L, i));
+                currentChannel.writeAndFlush(JSON.toJSONString(rpcMessageDTO) + "\n");
+                log.info("等待生产者发送消息，重试次数为：{}，消息Id：{}，本次等待{}ms", i, traceId, waitMillis);
 
-                //解除等待返回true，超时则返回false，校验唤醒是否有效
-                if(await&&storedLatch!=null&&storedLatch.getVersion()==currentVersion){
-                        //确认是当前版本的latch被正常唤醒（非超时、非错误唤醒），返回确认响应
-                    //存储生产者已被确认的消息
-                    ackConfirmHashMap.put(currentTraceId,message);
-                    return Result.ok("消息发送成功", currentTraceId);
+                boolean await = latch.await(waitMillis, TimeUnit.MILLISECONDS);
+                String brokerError = traceIdErrorMap.remove(traceId);
+                traceIdLatchMap.remove(traceId);
+
+                if (brokerError != null) {
+                    // Broker 已明确拒绝，重试没有意义
+                    log.error("Broker 拒绝消息，不再重试。消息ID：{}，原因：{}", traceId, brokerError);
+                    return Result.build("消息发送失败：" + brokerError, ResultCodeEnum.FAILED, traceId);
                 }
-                // 清理映射关系
-                traceIdLatchMap.remove(currentTraceId);
-                //获取当前时间
-                long endTime = System.currentTimeMillis();
-                log.info("生产者第{}次发送失败，本次等待时间应该为：{} ，实际等待时间为：{},消息id:{}"
-                        ,i,(long)config.getProducerRetryTimeCoefficient()*Math.pow(2L, i),endTime-startTime,currentTraceId);
+                if (await && latch.getVersion() == currentVersion) {
+                    return Result.ok("消息发送成功", traceId);
+                }
+                log.warn("生产者第{}次发送等待超时（{}ms），消息id：{}", i, waitMillis, traceId);
             }
-            //超时返回失败
             log.info("消息发送超时，返回失败");
-            // 清理映射关系
-            traceIdLatchMap.remove(currentTraceId);
-            return Result.build("消息发送超时", ResultCodeEnum.FAILED, currentTraceId);
+            return Result.build("消息发送超时", ResultCodeEnum.FAILED, traceId);
 
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            traceIdLatchMap.remove(traceId);
+            return Result.build("消息发送被中断", ResultCodeEnum.FAILED, traceId);
         } catch (Exception e) {
-            return Result.build("消息发送失败", ResultCodeEnum.FAILED,null);
+            traceIdLatchMap.remove(traceId);
+            log.error("消息发送异常，消息ID：{}", traceId, e);
+            return Result.build("消息发送失败", ResultCodeEnum.FAILED, traceId);
         }
     }
-/*
- *
- * @author jjs
- * date 2025/9/12 22:20
- * @param null
- * description:目前超时重传仍存在的问题（优化点）
- *
- * CountDownLatch 的并发问题
-如果在latch.await()返回前，有其他线程调用了该 latch 的countDown()，可能导致错误唤醒
-重试时创建新的 latch 并覆盖 map 中的值，但旧的 latch 可能还在等待，会造成内存泄漏
-异常处理仍不完善
-channel.writeAndFlush()可能抛出异常，但当前代码会直接进入 catch 块返回失败
-异常情况下currentTraceId可能为 null，导致traceIdLatchMap.remove(currentTraceId)抛出 NPE
-消息重复发送风险
-如果服务端已经收到消息并返回确认，但由于网络原因客户端没收到，会触发重试导致消息重复
-Map 清理时机问题
-每次循环结束都清理 map，但如果在latch.await()之后、remove之前发生异常，仍可能导致内存泄漏
-
-改进建议：
-
-统一使用Math.pow()进行幂运算，避免日志与实际行为不一致
-考虑使用ThreadLocal存储 latch，避免 map 的并发问题
-完善异常处理，确保各种异常情况下都能正确清理资源
-添加消息去重机制，比如基于currentTraceId的幂等性设计
-可以使用try-finally块确保资源清理代码一定会执行
- *
- */
-
-
-
-
-
-
 
     // 关闭资源
     @PreDestroy
     public void close() {
+        closed = true;
+        reconnectScheduler.shutdownNow();
         traceIdLatchMap.clear();
-        ackConfirmHashMap.clear();
-        if (group != null) group.shutdownGracefully();
+        traceIdErrorMap.clear();
+        if (group != null) {
+            group.shutdownGracefully();
+        }
         log.info("生产者已关闭");
     }
 
+    /** Broker 确认消息 */
     public void setResponse(String traceId, String methodType, long version) {
-        // 根据traceId获取对应的latch并释放
         VersionedLatch latch = traceIdLatchMap.get(traceId);
-        if (latch != null&&latch.getVersion() == version) {
-            // 验证确认类型
+        if (latch != null && latch.getVersion() == version) {
             if (MethodType.P_CONFIRM_MSG.equals(methodType)) {
                 latch.countDown(version);
             }
         }
     }
 
+    /** Broker 返回 ERROR 时调用：记录原因并唤醒等待线程 */
+    public void onErrorMessage(String traceId, String error) {
+        if (traceId == null) {
+            return;
+        }
+        VersionedLatch latch = traceIdLatchMap.get(traceId);
+        if (latch == null) {
+            // 该消息已经超时/结束，忽略迟到的错误响应，避免 errorMap 泄漏
+            log.debug("收到迟到/未知的消息错误响应，traceId={}，原因={}", traceId, error);
+            return;
+        }
+        traceIdErrorMap.put(traceId, error);
+        latch.countDown(latch.getVersion());
+    }
 }

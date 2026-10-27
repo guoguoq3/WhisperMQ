@@ -47,4 +47,26 @@ public class MqConfigProperties {
     //死信队列配置
     //死信队列最大重试次数（默认为5）
     private int maxDeadLetterRetryCount=5;
+
+    //可靠投递 / 连接保活相关配置
+    /** 消息推送给消费者后等待 ACK 的超时时间（毫秒，超时触发重投，默认：10秒） */
+    private long ackTimeoutMillis = 10000;
+    /** 单条消息向同一消费组投递的最大次数（含首次，超过后进入死信，默认：3） */
+    private int maxDeliveryAttempts = 3;
+    /** 客户端心跳发送间隔（毫秒，默认：15秒） */
+    private long heartbeatIntervalMillis = 15000;
+    /** 客户端断线重连的初始退避时间（毫秒，默认：1秒） */
+    private long reconnectInitialDelayMillis = 1000;
+    /** 客户端断线重连的最大退避时间（毫秒，默认：30秒） */
+    private long reconnectMaxDelayMillis = 30000;
+    /** 新消费组首次订阅时是否从最早消息开始回溯（默认 true，避免订阅生效前发布的消息被丢弃） */
+    private boolean newGroupStartFromEarliest = true;
+
+    //消费端业务线程池 / 控制请求确认（P1）
+    /** 消费者业务线程数（0 = 按 CPU 核数自动，默认：0） */
+    private int consumerWorkerThreads = 0;
+    /** 每个业务线程的消息队列容量（默认：10000，满了不 ACK、由 Broker 超时重投） */
+    private int consumerQueueCapacity = 10000;
+    /** 入组/订阅等待 Broker 确认的超时时间（毫秒，默认：5秒） */
+    private long subscribeTimeoutMillis = 5000;
 }

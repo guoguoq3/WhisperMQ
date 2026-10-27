@@ -5,6 +5,8 @@ import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelId;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.handler.timeout.IdleState;
+import io.netty.handler.timeout.IdleStateEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.guoguo.broker.ConsumerGroup.ConsumerGroupManager;
 import org.guoguo.broker.core.BrokerManager;
@@ -50,18 +52,18 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
             rpcDto = JSON.parseObject(cleanMsg, RpcMessageDTO.class);
         } catch (Exception e) {
             log.error("WhisperMQ Broker 解析RPC消息失败: {}", cleanMsg, e);
-            sendErrorResponse(ctx, "消息格式错误：" + e.getMessage());
+            sendErrorResponse(ctx, null, "消息格式错误：" + e.getMessage());
             return;
         }
         if (rpcDto == null) {
             log.error("WhisperMQ Broker RPC消息解析结果为null: {}", cleanMsg);
-            sendErrorResponse(ctx, "消息格式错误");
+            sendErrorResponse(ctx, null, "消息格式错误");
             return;
         }
         String methodType = rpcDto.getMethodType();
         if (methodType == null) {
             log.error("WhisperMQ Broker 方法类型为null: {}", rpcDto);
-            sendErrorResponse(ctx, "缺少方法类型");
+            sendErrorResponse(ctx, null, "缺少方法类型");
             return;
         }
         FunctionEntity funcDto;
@@ -69,12 +71,12 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
             funcDto = JSON.parseObject(rpcDto.getJson(), FunctionEntity.class);
         } catch (Exception e) {
             log.error("WhisperMQ Broker 解析FunctionEntity失败: {}", rpcDto.getJson(), e);
-            sendErrorResponse(ctx, "FunctionEntity格式错误：" + e.getMessage());
+            sendErrorResponse(ctx, null, "FunctionEntity格式错误：" + e.getMessage());
             return;
         }
         if (funcDto == null) {
             log.error("WhisperMQ Broker FunctionEntity解析结果为null: {}", rpcDto.getJson());
-            sendErrorResponse(ctx, "FunctionEntity格式错误");
+            sendErrorResponse(ctx, null, "FunctionEntity格式错误");
             return;
         }
 
@@ -101,37 +103,40 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
                 //处理消费者订阅消息并告知消费者消息已收到
                 case MethodType.GROUP_SUBSCRIBE:
                     SubscribeReqDTO subscribeReqDTO = JSON.parseObject(rpcDto.getJson(), SubscribeReqDTO.class);
-                    //解析通道信息获取消费者id，后续使用这个id来获取消费者tag信息
-                    groupManager.GroupSubscribe(subscribeReqDTO,ctx);
-                    //前面是消费者消息回溯 这里回溯完返回订阅响应结果
-                    sendSuccessResponse(ctx,traceId);
+                    // 订阅失败时把原因回给客户端，而不是一律 SUCCESS
+                    String subscribeError = groupManager.GroupSubscribe(subscribeReqDTO, ctx);
+                    if (subscribeError == null) {
+                        sendControlResponse(ctx, traceId, MethodType.B_SUBSCRIBE_RESPONSE);
+                    } else {
+                        sendErrorResponse(ctx, traceId, subscribeError);
+                    }
                     break;
 
                 //处理消费者组取消订阅主题
                 case MethodType.GROUP_UNSUBSCRIBE:
                     SubscribeReqDTO subscribeReq = JSON.parseObject(rpcDto.getJson(), SubscribeReqDTO.class);
                     groupManager.groupUnsubscribe(subscribeReq.getGroupId(), subscribeReq.getTopic());
-                    sendSuccessResponse(ctx,traceId);
+                    sendControlResponse(ctx, traceId, MethodType.B_CONTROL_RESPONSE);
                     break;
 
                 //处理消费者加入消费者组
                 case MethodType.CONSUMER_JOIN_GROUP:
                     //这里的rpcDto.getJson()是ConsumerThings类，需要再调用一下包装类，而funcDto.getJson()是直接传的组字符串，不需要类型来接收
                     groupManager.consumerJoinGroup(funcDto.getJson(), consumerId, ctx.channel());
-                    sendSuccessResponse(ctx,traceId);
+                    sendControlResponse(ctx, traceId, MethodType.B_CONTROL_RESPONSE);
                     break;
 
                 //处理消费者离开消费者组
                 case MethodType.CONSUMER_LEAVE_GROUP:
                     //这里的funcDto.getJson()是直接传的组字符串，不需要类型来接收
                     groupManager.consumerLeaveGroup(funcDto.getJson(), consumerId);
-                    sendSuccessResponse(ctx, traceId);
+                    sendControlResponse(ctx, traceId, MethodType.B_CONTROL_RESPONSE);
                     break;
 
                 //处理消费者返回ack确认消息
                 case MethodType.C_ACK_MSG:
                     ConsumerAckReqDTO ackReq = JSON.parseObject(rpcDto.getJson(), ConsumerAckReqDTO.class);
-                    brokerManager.handleConsumerAck(ackReq,ackReq.getGroupId());
+                    brokerManager.handleConsumerAck(ackReq, consumerId);
                     break;
 
                 case MethodType.C_DEAD_MSG:
@@ -140,13 +145,30 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
                     brokerManager.handlerDeadLetter(deadLetter, funcDto.getMessageId());
                     break;
 
+                // 心跳：刷新连接活跃状态，原样回 PONG
+                case MethodType.HEARTBEAT_PING:
+                    sendPong(ctx, traceId);
+                    break;
+
+                // 死信重放：把指定死信重新投递给原消费组
+                case MethodType.DEAD_LETTER_REPLAY:
+                    DeadLetterReplayReqDTO replayReq = JSON.parseObject(rpcDto.getJson(), DeadLetterReplayReqDTO.class);
+                    String replayError = brokerManager.replayDeadLetter(
+                            replayReq == null ? null : replayReq.getDeadLetterId());
+                    if (replayError == null) {
+                        sendSuccessResponse(ctx, traceId);
+                    } else {
+                        sendErrorResponse(ctx, traceId, replayError);
+                    }
+                    break;
+
                 default:
                     log.error("Broker收到未知请求：" + rpcDto);
                     // 这里后续会添加消息存储和推送逻辑
             }
         }catch (Exception e){
             log.error("WhisperMQ Broker 处理消息异常", e);
-            sendErrorResponse(ctx, "处理失败：" + e.getMessage());
+            sendErrorResponse(ctx, traceId, "处理失败：" + e.getMessage());
         }
 
     }
@@ -155,15 +177,41 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
         String consumerId = ctx.channel().id().asLongText();
-        log.info("WhisperMQ Broker 检测到消费者通道已断开：{}", ctx.channel().remoteAddress());
+        log.info("WhisperMQ Broker 检测到通道已断开：{}（consumerId={}）", ctx.channel().remoteAddress(), consumerId);
+        // 修复：旧实现命中第一个组就 break，且最后还多调用了一次 consumerLeaveGroup(consumerId, consumerId)。
+        // 现在遍历全部消费者组，把该连接从所有组中摘除（同一连接理论上只属于一个组，
+        // 但遍历全部才能保证脏数据/重复加入时不残留）。
         for (Map.Entry<String, ConsumerGroup> entry : groupManager.getGroupMap().entrySet()) {
             ConsumerGroup group = entry.getValue();
-            if (group.getOnlineConsumers().containsKey(consumerId)){
-                groupManager.consumerLeaveGroup(entry.getKey(),consumerId);
-                break;
+            if (group.getOnlineConsumers().containsKey(consumerId)) {
+                groupManager.consumerLeaveGroup(entry.getKey(), consumerId);
+                // 该消费者手上未确认的消息重新投递给组内其他消费者
+                brokerManager.onConsumerOffline(entry.getKey(), consumerId);
             }
         }
-        groupManager.consumerLeaveGroup(ctx.channel().id().asLongText(), ctx.channel().id().asLongText());
+    }
+
+    // 心跳/空闲检测：读空闲说明对端已失联（或未按约定发心跳），主动关闭连接释放资源
+    @Override
+    public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
+        if (evt instanceof IdleStateEvent idleEvent && idleEvent.state() == IdleState.READER_IDLE) {
+            log.warn("WhisperMQ Broker 连接读空闲超时，关闭连接：{}", ctx.channel().remoteAddress());
+            ctx.close();
+            return;
+        }
+        super.userEventTriggered(ctx, evt);
+    }
+
+    /** 心跳响应 */
+    private void sendPong(ChannelHandlerContext ctx, String traceId) {
+        ConsumerThings consumerThings = new ConsumerThings();
+        consumerThings.setMessageId(traceId);
+        consumerThings.setJson(MethodType.HEARTBEAT_PONG);
+        RpcMessageDTO response = new RpcMessageDTO();
+        response.setRequest(false);
+        response.setMethodType(MethodType.HEARTBEAT_PONG);
+        response.setJson(JSON.toJSONString(consumerThings));
+        ctx.writeAndFlush(JSON.toJSONString(response) + "\n");
     }
 
     // 发送成功响应
@@ -176,14 +224,19 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
         response.setJson(JSON.toJSONString(consumerThings));
         ctx.writeAndFlush(JSON.toJSONString(response) + "\n");
     }
-    private void sendSuccessResponse(ChannelHandlerContext ctx, String traceId, String methodType) {
-        ConsumerThings  consumerThings = new ConsumerThings();
+
+    /**
+     * 控制类请求（入组/退组/订阅）的确认响应。
+     * 带上原始 traceId，客户端据此唤醒 groupSubscribe / joinGroup 的等待者。
+     */
+    private void sendControlResponse(ChannelHandlerContext ctx, String traceId, String methodType) {
+        ConsumerThings consumerThings = new ConsumerThings();
         consumerThings.setMessageId(traceId);
-        consumerThings.setJson("SUCCESS77");
+        consumerThings.setJson(methodType);
         RpcMessageDTO response = new RpcMessageDTO();
         response.setRequest(false);
         response.setMethodType(methodType);
-
+        response.setJson(JSON.toJSONString(consumerThings));
         ctx.writeAndFlush(JSON.toJSONString(response) + "\n");
     }
 
@@ -199,14 +252,24 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
         ctx.writeAndFlush(JSON.toJSONString(response) + "\n");
     }
 
-    // 发送错误响应
-    private void sendErrorResponse(ChannelHandlerContext ctx, String msg) {
+    /**
+     * 发送统一错误响应。
+     *
+     * <p>旧实现把 json 赋值两次（ErrorResponse 的 JSON 被 "ERROR:xxx" 覆盖），
+     * 而且没有 methodType，客户端把它当正常 JSON 解析必然抛异常，
+     * 最终表现为"客户端超时"而不是一个明确的错误。</p>
+     *
+     * @param traceId 原始请求的 messageId，客户端据此把错误关联到等待中的 send()
+     */
+    private void sendErrorResponse(ChannelHandlerContext ctx, String traceId, String msg) {
+        ErrorResponse errorResponse = new ErrorResponse();
+        errorResponse.setMessageId(traceId);
+        errorResponse.setJson(msg == null ? "unknown error" : msg);
+
         RpcMessageDTO response = new RpcMessageDTO();
         response.setRequest(false);
-        ErrorResponse errorResponse = new ErrorResponse();
-        errorResponse.setMessageId(String.valueOf(System.currentTimeMillis()));
+        response.setMethodType(MethodType.ERROR);
         response.setJson(JSON.toJSONString(errorResponse));
-        response.setJson("ERROR:" + msg);
         ctx.writeAndFlush(JSON.toJSONString(response) + "\n");
     }
 

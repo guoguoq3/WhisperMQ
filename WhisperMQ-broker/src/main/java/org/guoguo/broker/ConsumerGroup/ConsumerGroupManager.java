@@ -7,6 +7,7 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.guoguo.broker.core.BrokerManager;
 import org.guoguo.broker.util.OffsetPersistUtil;
+import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.pojo.DTO.SubscribeReqDTO;
 import org.guoguo.common.pojo.Entity.ConsumerGroup;
 import org.guoguo.common.pojo.Entity.MqMessage;
@@ -15,11 +16,10 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -31,14 +31,17 @@ public class ConsumerGroupManager {
     private final Map<String, ConsumerGroup> groupMap = new ConcurrentHashMap<>();
     private final OffsetPersistUtil offsetPersistUtil;
     private final BrokerManager brokerManager;
+    private final MqConfigProperties config;
     //这里返回一个不可修改的视图
     public Map<String, ConsumerGroup> getGroupMap() {
         return Collections.unmodifiableMap(groupMap);
     }
     @Autowired
-    public ConsumerGroupManager(OffsetPersistUtil offsetPersistUtil,  BrokerManager brokerManager) {
+    public ConsumerGroupManager(OffsetPersistUtil offsetPersistUtil, BrokerManager brokerManager,
+                                MqConfigProperties config) {
         this.offsetPersistUtil = offsetPersistUtil;
         this.brokerManager = brokerManager;
+        this.config = config;
     }
 
     // return new HashMap<>(groupMap); 深拷贝方法
@@ -87,78 +90,104 @@ public class ConsumerGroupManager {
         });
     }
 
-    //消费者订阅主题  其实直接调用这个方法调用就行不必再创建消费者组
-    public void GroupSubscribe(SubscribeReqDTO subscribeReqDTO, ChannelHandlerContext ctx) {
-        //检查subscribeReqDTO是否为null
+    /**
+     * 消费者订阅主题（组级订阅 ＋ 消费者级 Tag）。
+     *
+     * <p>P1 改造点：
+     * <ul>
+     *   <li>返回错误原因（null = 成功），让 Broker 能回给客户端明确的订阅响应或错误；</li>
+     *   <li>同一个组重复订阅同一个 topic 不再直接 return，而是更新该消费者的 Tag 并做增量回溯
+     *       —— 旧实现会让同组第二个消费者永远登记不上自己的 Tag，从而收不到任何消息；</li>
+     *   <li>回溯按"本次订阅者自己的 Tag"过滤，不再用组里最后一次订阅的 tag 代替所有人。</li>
+     * </ul>
+     *
+     * @return null 表示订阅成功，否则返回失败原因
+     */
+    public String GroupSubscribe(SubscribeReqDTO subscribeReqDTO, ChannelHandlerContext ctx) {
         if (subscribeReqDTO == null) {
-            log.error("SubscribeReqDTO is null");
-            return;
+            return "订阅请求不能为空";
         }
         String groupId = subscribeReqDTO.getGroupId();
         String topic = subscribeReqDTO.getTopic();
-        List<String> tags = subscribeReqDTO.getTags();
-
         if (StringUtils.isBlank(groupId)) {
-            log.error("WhisperMQ Broker 订阅失败：消费者组 ID（groupId）不能为 null/空");
-            return;
+            return "groupId 不能为空";
         }
         if (StringUtils.isBlank(topic)) {
-            log.error("WhisperMQ Broker 订阅失败：主题（topic）不能为 null/空（组：{}）", groupId);
-            return;
+            return "topic 不能为空";
         }
+        if (ctx == null || ctx.channel() == null) {
+            return "订阅连接不可用";
+        }
+        List<String> tags = subscribeReqDTO.getTags();
         if (tags == null) {
-            subscribeReqDTO.setTags(Collections.emptyList()); // 空标签视为“订阅所有标签”
-            log.warn("WhisperMQ Broker 订阅主题{}（组：{}）：标签为 null，自动调整为订阅所有标签", topic, groupId);
+            subscribeReqDTO.setTags(Collections.emptyList()); // 空标签 = 订阅所有标签
+            tags = subscribeReqDTO.getTags();
+            log.warn("WhisperMQ Broker 订阅主题{}（组：{}）：标签为 null，按订阅所有标签处理", topic, groupId);
         }
 
-        //检查groupId是否为null
-        if (subscribeReqDTO.getGroupId() == null) {
-            log.error("GroupId is null in SubscribeReqDTO: {}", subscribeReqDTO);
-            return;
+        ConsumerGroup consumerGroup = getOrCreateConsumerGroup(groupId);
+        String consumerId = ctx.channel().id().asLongText();
+        boolean firstSubscription = !consumerGroup.getSubscribeMap().containsKey(topic);
+        if (firstSubscription) {
+            //回溯一波位点
+            offsetPersistUtil.init(consumerGroup, topic);
+        } else {
+            log.info("WhisperMQ Broker 组{}重复订阅主题{}：更新消费者{}的Tag并回溯增量消息",
+                    groupId, topic, consumerId);
         }
-        ConsumerGroup consumerGroup = getOrCreateConsumerGroup(subscribeReqDTO.getGroupId());
 
-        if (consumerGroup.getSubscribeMap().containsKey(topic)) {
-            log.warn("WhisperMQ Broker 订阅关系已存在，请勿重复订阅");
-            return;
-        }
-
-        //回溯一波位点
-        offsetPersistUtil.init(consumerGroup, topic);
+        // 记录组级订阅配置 + 当前消费者自己的 Tag
+        consumerGroup.addSubscribe(subscribeReqDTO, ctx);
 
         String lastOffset = consumerGroup.getTopicOffsetMap().get(topic);
-        if (lastOffset == null){
-           log.info("WhisperMQ Broker 组{}订阅主题{}：无历史位点，位点为最新的消息", groupId, topic);
-            consumerGroup.addSubscribe(subscribeReqDTO,ctx);
-       }else {
-
-        //记录组的订阅关系
-        consumerGroup.addSubscribe(subscribeReqDTO,ctx);
-        log.info("WhisperMQ Broker 消费者组{}订阅主题{}（标签：{}）",
-                subscribeReqDTO.getGroupId(), topic, subscribeReqDTO.getTags());
-
-           //获取在消费者位点之后的消息 两个条件一个是大于lastOffset 一个是topic相同  todo：可能还会有tag的事情
-            //System.out.println(brokerManager.getMessageMap());
-            List<Map.Entry<String, MqMessage>> filteredMessagesStream = brokerManager.getMessageMap().entrySet().stream()
-                    .filter(entry -> topic.equals(entry.getValue().getTopic())) // 主题匹配
-                    .filter(entry -> {
-                        String messageTag = entry.getValue().getTag();
-                        // 支持通配符或具体标签匹配
-                        return "*".equals(messageTag) || subscribeReqDTO.getTags().contains(messageTag);
-                    })
-                    .filter(entry -> Long.parseLong(entry.getKey()) > Long.parseLong(lastOffset)) // ID大于lastOffset
-                    .toList();
-
-
-            for (Map.Entry<String, MqMessage> entry : filteredMessagesStream) {
-            brokerManager.pushMessageToGroup(consumerGroup, entry.getKey(), entry.getValue(),false);
+        if (lastOffset == null) {
+            if (!config.isNewGroupStartFromEarliest()) {
+                log.info("WhisperMQ Broker 组{}订阅主题{}：无历史位点，从最新消息开始", groupId, topic);
+                return null;
+            }
+            // 新组默认按最早消息回溯，避免"订阅生效前发布的消息被永久丢弃"
+            lastOffset = "0";
+            log.info("WhisperMQ Broker 组{}订阅主题{}：无历史位点，从最早消息开始回溯", groupId, topic);
         }
+
+        // 回溯：主题匹配 + 该消费者的 Tag 匹配 + ID 大于位点，按消息ID升序
+        final String startOffset = lastOffset;
+        final List<String> subscribeTags = tags;
+        List<Map.Entry<String, MqMessage>> backlog = brokerManager.getMessageMap().entrySet().stream()
+                .filter(entry -> topic.equals(entry.getValue().getTopic()))
+                .filter(entry -> matchesTag(subscribeTags, entry.getValue().getTag()))
+                .filter(entry -> compareMessageId(entry.getKey(), startOffset) > 0)
+                .sorted(Comparator.comparingLong(entry -> parseMessageId(entry.getKey())))
+                .toList();
+
+        for (Map.Entry<String, MqMessage> entry : backlog) {
+            brokerManager.pushMessageToGroup(consumerGroup, entry.getKey(), entry.getValue(), false);
+        }
+        log.info("WhisperMQ Broker 消费者组{}订阅主题{}成功（消费者：{}，标签：{}，回溯：{}条）",
+                groupId, topic, consumerId, tags, backlog.size());
+        return null;
+    }
+
+    /**
+     * Tag 匹配：订阅了 * 或精确命中；消息无标签、订阅未指定标签时不做过滤。
+     */
+    private boolean matchesTag(List<String> subscribedTags, String messageTag) {
+        if (messageTag == null || subscribedTags == null || subscribedTags.isEmpty()) {
+            return true;
+        }
+        return subscribedTags.contains("*") || subscribedTags.contains(messageTag);
+    }
+
+    private long parseMessageId(String messageId) {
+        try {
+            return Long.parseLong(messageId);
+        } catch (NumberFormatException e) {
+            return messageId == null ? 0 : Math.abs(messageId.hashCode());
         }
     }
 
     //消费者加入组
     public void consumerJoinGroup(String groupId, String consumerId, io.netty.channel.Channel channel) {
-        //检查参数是否为null
         if (groupId == null) {
             log.error("GroupId is null in consumerJoinGroup");
             return;
@@ -174,22 +203,17 @@ public class ConsumerGroupManager {
         ConsumerGroup consumerGroup = getOrCreateConsumerGroup(groupId);
         consumerGroup.addConsumer(consumerId, channel);
 
-        // 新增：为该消费者初始化其在组内已订阅主题的Tag信息
-        // （假设消费者订阅的Tag在SubscribeReqDTO中，此处需根据实际业务获取消费者的Tag列表）
-        // 注：实际场景中，消费者加入时应携带其订阅的Tag，此处简化为从组的订阅关系中获取默认Tag
+        // 只给"还没有自己 Tag 配置"的消费者补默认值（组级配置），
+        // 不能覆盖它自己在 GROUP_SUBSCRIBE 里声明的 Tag。
         for (Map.Entry<String, SubscribeReqDTO> entry : consumerGroup.getSubscribeMap().entrySet()) {
             String topic = entry.getKey();
-            SubscribeReqDTO subscribeReq = entry.getValue();
-            // 组订阅的Tag（实际应替换为消费者个人订阅的Tag）
-            List<String> tags = subscribeReq.getTags();
-            consumerGroup.addConsumerTopicTags(topic, consumerId, tags);
-            log.info("WhisperMQ Broker 消费者{}加入组{}，订阅主题{}的Tag：{}",
-                    consumerId, groupId, topic, tags);
+            if (consumerGroup.getConsumerTags(topic, consumerId) == null) {
+                consumerGroup.addConsumerTopicTags(topic, consumerId, entry.getValue().getTags());
+                log.info("WhisperMQ Broker 消费者{}加入组{}，按组配置初始化为主题{}的Tag：{}",
+                        consumerId, groupId, topic, entry.getValue().getTags());
+            }
         }
-
-
     }
-
 
     // 消费者组取消订阅主题
     public void groupUnsubscribe(String groupId, String topic) {
@@ -209,7 +233,9 @@ public class ConsumerGroupManager {
             return;
         }
         group.removeSubscribe(topic);
-        offsetPersistUtil.closeGroup(groupId);
+        // 注意：不能在这里关闭整组的位点 writer。
+        // 旧实现在"退订一个 topic"时调用 closeGroup(groupId)，会把同组其他 topic 的
+        // 位点写入流一起关掉（后续 ACK 直接静默失败）。组真正销毁时才关闭。
         log.info("WhisperMQ Broker 消费者组{}取消订阅主题{}", groupId, topic);
     }
 
@@ -235,6 +261,8 @@ public class ConsumerGroupManager {
         // 组内无消费者时，自动销毁组（可选：也可保留组配置）
         if (consumerGroup.isEmpty()) {
             groupMap.remove(groupId);
+            // 组已销毁：此时才关闭该组的位点写入流（异步排队，不阻塞 IO 线程）
+            offsetPersistUtil.closeGroup(groupId);
             log.info("WhisperMQ Broker 消费者组{}无在线消费者，自动销毁", groupId);
         }
     }
@@ -277,14 +305,21 @@ public class ConsumerGroupManager {
         }
         // 仅更新为更大的消息ID（确保位点递增，避免回退）
         String currentOffset = consumerGroup.getTopicOffsetMap().get(topic);
-        if (currentOffset == null || Long.parseLong(messageId) > Long.parseLong(currentOffset)) {
+        if (currentOffset == null || compareMessageId(messageId, currentOffset) > 0) {
             consumerGroup.getTopicOffsetMap().put(topic, messageId);
-            // 异步持久化
-            CompletableFuture.runAsync(() ->
-                    offsetPersistUtil.writeMessage(groupId, topic, messageId)
-            );
+            // 位点持久化：内部是单线程有序队列（旧实现用 commonPool 异步写，顺序不可控）
+            offsetPersistUtil.writeMessage(groupId, topic, messageId);
             log.info("WhisperMQ Broker 更新组{}的主题{}消费位点至消息{}",
                     groupId, topic, messageId);
+        }
+    }
+
+    /** 消息 ID 比较：正常为雪花数字，异常格式退化为字符串比较，避免 NumberFormatException */
+    private int compareMessageId(String left, String right) {
+        try {
+            return Long.compare(Long.parseLong(left), Long.parseLong(right));
+        } catch (NumberFormatException e) {
+            return left.compareTo(right);
         }
     }
 
