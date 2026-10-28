@@ -10,6 +10,7 @@ import io.netty.handler.timeout.IdleStateEvent;
 import lombok.extern.slf4j.Slf4j;
 import org.guoguo.broker.ConsumerGroup.ConsumerGroupManager;
 import org.guoguo.broker.core.BrokerManager;
+import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.pojo.DTO.*;
 import org.guoguo.common.pojo.Entity.*;
 import org.guoguo.common.constant.MethodType;
@@ -17,6 +18,7 @@ import org.guoguo.common.util.SnowflakeIdGeneratorUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -29,11 +31,14 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
     // 获取Broker管理器实例
     private final BrokerManager brokerManager;
     private final ConsumerGroupManager groupManager;
+    private final MqConfigProperties config;
 
     @Autowired
-    public MqBrokerHandler(BrokerManager brokerManager, ConsumerGroupManager groupManager) {
+    public MqBrokerHandler(BrokerManager brokerManager, ConsumerGroupManager groupManager,
+                           MqConfigProperties config) {
         this.brokerManager = brokerManager;
         this.groupManager = groupManager;
+        this.config = config;
     }
     /**
      * 接收消息将rpc消息转为message对象
@@ -67,6 +72,13 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
                     protocolVersion, RpcMessageDTO.PROTOCOL_VERSION);
             sendErrorResponse(ctx, null, "不支持的协议版本：" + protocolVersion
                     + "，服务端支持 <= " + RpcMessageDTO.PROTOCOL_VERSION);
+            return;
+        }
+        // P1 Stage D：token 鉴权（默认关闭；开启后不匹配直接断开，避免未授权客户端占用连接）
+        if (config.isAuthEnabled() && !authPassed(rpcDto.getToken())) {
+            log.warn("WhisperMQ Broker 鉴权失败，关闭连接：{}", ctx.channel().remoteAddress());
+            sendErrorResponse(ctx, null, "鉴权失败");
+            ctx.close();
             return;
         }
         String methodType = rpcDto.getMethodType();
@@ -140,6 +152,18 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
                     //这里的funcDto.getJson()是直接传的组字符串，不需要类型来接收
                     groupManager.consumerLeaveGroup(funcDto.getJson(), consumerId);
                     sendControlResponse(ctx, traceId, MethodType.B_CONTROL_RESPONSE);
+                    break;
+
+                // 背压：暂停投递（fire-and-forget）
+                case MethodType.C_PAUSE:
+                    ConsumerFlowControlDTO pauseReq = JSON.parseObject(rpcDto.getJson(), ConsumerFlowControlDTO.class);
+                    brokerManager.pauseConsumer(consumerId, pauseReq == null ? 0 : pauseReq.getDurationMillis());
+                    break;
+
+                // 背压：恢复投递，Broker 按组位点补投暂停期间的消息
+                case MethodType.C_RESUME:
+                    ConsumerFlowControlDTO resumeReq = JSON.parseObject(rpcDto.getJson(), ConsumerFlowControlDTO.class);
+                    brokerManager.resumeConsumer(resumeReq == null ? null : resumeReq.getGroupId(), consumerId);
                     break;
 
                 //处理消费者返回ack确认消息
@@ -280,6 +304,17 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
         response.setMethodType(MethodType.ERROR);
         response.setJson(JSON.toJSONString(errorResponse));
         ctx.writeAndFlush(JSON.toJSONString(response) + "\n");
+    }
+
+    /** 常量时间比较 token，避免时序侧信道 */
+    private boolean authPassed(String token) {
+        String expected = config.getAuthToken();
+        if (expected == null || expected.isEmpty() || token == null) {
+            return false;
+        }
+        return java.security.MessageDigest.isEqual(
+                token.getBytes(StandardCharsets.UTF_8),
+                expected.getBytes(StandardCharsets.UTF_8));
     }
 
 }

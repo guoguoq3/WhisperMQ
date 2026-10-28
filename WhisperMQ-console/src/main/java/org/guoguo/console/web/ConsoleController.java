@@ -59,6 +59,12 @@ public class ConsoleController {
         return console.overview();
     }
 
+    /** 统一指标：Broker / 存储 / 背压 / 去重 */
+    @GetMapping("/stats")
+    public Map<String, Object> stats() {
+        return console.stats();
+    }
+
     // ------------------------------------------------------------------ 生产者
 
     @PostMapping("/messages")

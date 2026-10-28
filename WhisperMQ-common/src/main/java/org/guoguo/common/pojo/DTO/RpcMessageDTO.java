@@ -23,4 +23,7 @@ public class RpcMessageDTO {
     private String methodType;
     /** 消息内容（JSON） */
     private String json;
+
+    /** 鉴权 token（P1 Stage D；服务端开启鉴权时必填，关闭时忽略） */
+    private String token;
 }

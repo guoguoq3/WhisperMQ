@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class MessageDispatcher implements AutoCloseable {
 
     private final ExecutorService[] workers;
+    private final int queueCapacity;
     private final AtomicLong submitted = new AtomicLong();
     private final AtomicLong completed = new AtomicLong();
     private final AtomicLong failed = new AtomicLong();
@@ -34,6 +35,7 @@ public class MessageDispatcher implements AutoCloseable {
     public MessageDispatcher(int workerCount, int queueCapacity) {
         int n = Math.max(1, workerCount);
         int capacity = Math.max(1, queueCapacity);
+        this.queueCapacity = capacity;
         this.workers = new ExecutorService[n];
         for (int i = 0; i < n; i++) {
             final int index = i;
@@ -88,6 +90,20 @@ public class MessageDispatcher implements AutoCloseable {
 
     public int getWorkerCount() {
         return workers.length;
+    }
+
+    /** 当前排队中的任务总数（背压判断用） */
+    public int queued() {
+        int total = 0;
+        for (ExecutorService worker : workers) {
+            total += ((ThreadPoolExecutor) worker).getQueue().size();
+        }
+        return total;
+    }
+
+    /** 全部 worker 的队列总容量 */
+    public int capacity() {
+        return workers.length * queueCapacity;
     }
 
     public long getSubmitted() {

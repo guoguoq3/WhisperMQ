@@ -188,6 +188,7 @@ public class MqProducer implements IMqProducer {
         RpcMessageDTO rpcMessageDTO = new RpcMessageDTO();
         rpcMessageDTO.setRequest(true);
         rpcMessageDTO.setMethodType(MethodType.P_SEND_MSG);
+        rpcMessageDTO.setToken(config.getAuthToken());
 
         try {
             //超时重传机制

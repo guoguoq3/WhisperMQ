@@ -90,7 +90,7 @@ mvn -o -pl WhisperMQ-consumer -am test -Dtest=SmokeIT -DfailIfNoTests=false
   （`ack-timeout-millis`、`max-delivery-attempts`、`max-dead-letter-retry-count`、
   `heartbeat-interval-millis`、`reconnect-*-millis`、`subscribe-timeout-millis`、
   `default-partitions`、`hot-cache-size`、`retention-millis`、`retention-max-bytes`、
-  `max-file-size` 等）。
+  `max-file-size`、`backpressure-*`、`dedup-*`、`auth-*` 等）。
 - `whisper-console.*`：控制台参数，见 `WhisperMQ-console/src/main/resources/application.properties`
   （`maven-command`、`repo-root`、`max-recent-messages`）。
 - 控制台默认数据目录为 `./WhisperMQ-console-data`，与仓库根目录的历史演示数据隔离。
@@ -104,7 +104,8 @@ mvn -o -pl WhisperMQ-consumer -am test -Dtest=SmokeIT -DfailIfNoTests=false
 - **Stage B（已完成）**：分区投递与再均衡（`(topic, partition) → consumer` 分配表、
   epoch、按分区位点推进、Tag × 分区回退规则）；
 - **Stage C（已完成）**：Segment 存储 + 索引、启动按需加载、TTL/容量保留；
-- **Stage D（下一步）**：背压（暂停投递）、消费端去重、鉴权/TLS、管理指标；
+- **Stage D（已完成，TLS 待做）**：暂停投递背压、消费端去重、Token 鉴权、
+  `/api/stats` 指标；TLS 留待后续；
 - **Stage E**：多 Broker 副本、选主与故障转移。
 
 ## 已知限制 / 后续计划
@@ -119,7 +120,8 @@ mvn -o -pl WhisperMQ-consumer -am test -Dtest=SmokeIT -DfailIfNoTests=false
 - 存储已分段并建索引：启动只加载索引，消息体按需读取，`messageMap` 只是热缓存；
   索引仍常驻内存，百万级消息需要后续的磁盘索引/分页；
 - 保留策略按整段删除（TTL / 容量），默认关闭，需显式配置；
-- 无鉴权 / TLS（Stage D）；
+- Token 鉴权已支持（默认关闭）；TLS 尚未实现，仍是明文 TCP；
+- 去重是消费端进程内 LRU（默认开启，1000 条），重启失效、跨实例不共享；
 - 业务线程池满时仍采用“不 ACK + Broker 超时重投”，Stage D 改为暂停投递。
 
 详见 `docs/` 下的架构图与 P1 路线图。

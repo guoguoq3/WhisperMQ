@@ -181,22 +181,37 @@ public class ConsumerGroupManager {
         // 订阅关系变化后重新分配分区（分区数 > 1 才生效）
         rebalance(consumerGroup, topic);
 
+        int replayed = replayBacklog(consumerGroup, topic, tags);
+        log.info("WhisperMQ Broker 消费者组{}订阅主题{}成功（消费者：{}，标签：{}，回溯：{}条）",
+                groupId, topic, consumerId, tags, replayed);
+        return null;
+    }
+
+    /**
+     * 按组位点补投某个 topic 的历史消息（背压 resume 也走这里）。
+     *
+     * @param tags 为 null 时不按 Tag 过滤（由 pushMessageToGroup 按消息 Tag 选人）
+     */
+    public int replayBacklog(ConsumerGroup consumerGroup, String topic) {
+        return replayBacklog(consumerGroup, topic, null);
+    }
+
+    private int replayBacklog(ConsumerGroup consumerGroup, String topic, List<String> tags) {
+        if (consumerGroup == null || topic == null) {
+            return 0;
+        }
         boolean hasOffset = consumerGroup.hasOffset(topic);
         if (!hasOffset) {
             if (!config.isNewGroupStartFromEarliest()) {
-                log.info("WhisperMQ Broker 组{}订阅主题{}：无历史位点，从最新消息开始", groupId, topic);
-                return null;
+                log.info("WhisperMQ Broker 组{}主题{}：无历史位点，从最新消息开始", consumerGroup.getGroupId(), topic);
+                return 0;
             }
-            // 新组默认按最早消息回溯，避免"订阅生效前发布的消息被永久丢弃"
-            log.info("WhisperMQ Broker 组{}订阅主题{}：无历史位点，从最早消息开始回溯", groupId, topic);
+            log.info("WhisperMQ Broker 组{}主题{}：无历史位点，从最早消息开始回溯", consumerGroup.getGroupId(), topic);
         }
-
-        // 回溯：主题匹配 + 该消费者的 Tag 匹配 + 分区位点比较，按消息ID升序
         final boolean replayAll = !hasOffset;
-        final List<String> subscribeTags = tags;
         java.util.concurrent.atomic.AtomicInteger replayed = new java.util.concurrent.atomic.AtomicInteger();
         brokerManager.forEachBacklog(topic, (messageId, message) -> {
-            if (!matchesTag(subscribeTags, message.getTag())) {
+            if (tags != null && !matchesTag(tags, message.getTag())) {
                 return;
             }
             if (!replayAll) {
@@ -209,9 +224,7 @@ public class ConsumerGroupManager {
             brokerManager.pushMessageToGroup(consumerGroup, messageId, message, false);
             replayed.incrementAndGet();
         });
-        log.info("WhisperMQ Broker 消费者组{}订阅主题{}成功（消费者：{}，标签：{}，回溯：{}条）",
-                groupId, topic, consumerId, tags, replayed.get());
-        return null;
+        return replayed.get();
     }
 
     /**

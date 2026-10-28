@@ -55,6 +55,9 @@ public class BrokerManager {
      */
     private final Map<String, InFlightMessage> inFlightMap = new ConcurrentHashMap<>();
 
+    /** 背压：consumerId → 暂停截止时间（毫秒） */
+    private final Map<String, Long> pausedConsumers = new ConcurrentHashMap<>();
+
     //注入配置文件
     private final MqConfigProperties config;
     private final SegmentMessageStore messageStore;
@@ -140,8 +143,53 @@ public class BrokerManager {
         return messageStore.stats();
     }
 
-    private void cacheMessage(String messageId, MqMessage message) {
-        messageMap.put(messageId, message);
+    /** 背压：标记消费者暂停投递，到期自动恢复 */
+    public void pauseConsumer(String consumerId, long durationMillis) {
+        if (consumerId == null) {
+            return;
+        }
+        long pause = durationMillis > 0 ? durationMillis : Math.max(500, config.getBackpressurePauseMillis());
+        pausedConsumers.put(consumerId, System.currentTimeMillis() + pause);
+        log.info("WhisperMQ Broker 消费者{}暂停投递 {}ms（背压）", consumerId, pause);
+    }
+
+    /** 背压：清除暂停并按组位点补投暂停期间未投递的消息 */
+    public void resumeConsumer(String groupId, String consumerId) {
+        if (consumerId != null) {
+            pausedConsumers.remove(consumerId);
+        }
+        ConsumerGroup group = groupId == null ? null : groupManager.getGroupMap().get(groupId);
+        if (group == null) {
+            return;
+        }
+        for (String topic : group.getSubscribeMap().keySet()) {
+            groupManager.replayBacklog(group, topic);
+        }
+        log.info("WhisperMQ Broker 消费者{}恢复投递，组{}按位点补投", consumerId, groupId);
+    }
+
+    /** 该消费者当前是否处于暂停窗口 */
+    public boolean isPaused(String consumerId) {
+        if (consumerId == null) {
+            return false;
+        }
+        Long until = pausedConsumers.get(consumerId);
+        if (until == null) {
+            return false;
+        }
+        if (until <= System.currentTimeMillis()) {
+            pausedConsumers.remove(consumerId, until);
+            return false;
+        }
+        return true;
+    }
+
+    public int getPausedCount() {
+        pausedConsumers.entrySet().removeIf(entry -> entry.getValue() <= System.currentTimeMillis());
+        return pausedConsumers.size();
+    }
+
+    private void cacheMessage(String messageId, MqMessage message) {        messageMap.put(messageId, message);
         hotOrder.add(messageId);
         int limit = Math.max(0, config.getHotCacheSize());
         while (messageMap.size() > limit) {
@@ -358,6 +406,11 @@ public class BrokerManager {
         if (candidates.isEmpty()) {
             return null;
         }
+        // 背压：处于暂停窗口的消费者不参与本轮选择；全部暂停时返回 null，等 resume 补投
+        candidates.removeIf(this::isPaused);
+        if (candidates.isEmpty()) {
+            return null;
+        }
         if (excludeConsumerId != null && candidates.size() > 1) {
             candidates.remove(excludeConsumerId);
         }
@@ -400,6 +453,10 @@ public class BrokerManager {
             long ackTimeout = Math.max(1000, config.getAckTimeoutMillis());
             for (InFlightMessage record : inFlightMap.values()) {
                 if (now - record.getLastPushTime() < ackTimeout) {
+                    continue;
+                }
+                // 背压窗口内跳过：消费者队列满不是消费失败，不应累计投递次数（否则会误入死信）
+                if (isPaused(record.getConsumerId())) {
                     continue;
                 }
                 // 原子摘除，避免与 ACK 并发时重复重投
@@ -452,6 +509,7 @@ public class BrokerManager {
         if (groupId == null || consumerId == null) {
             return;
         }
+        pausedConsumers.remove(consumerId);
         for (InFlightMessage record : new ArrayList<>(inFlightMap.values())) {
             if (!groupId.equals(record.getGroupId()) || !consumerId.equals(record.getConsumerId())) {
                 continue;

@@ -190,12 +190,36 @@ public class ConsoleService {
         return root;
     }
 
-    private Map<String, Object> brokerInfo() {
-        Map<String, Object> info = new LinkedHashMap<>();
+    /** 统一指标端点：Broker/存储/消费端背压与去重指标 */
+    public Map<String, Object> stats() {
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("broker", brokerInfo());
+        stats.put("store", brokerManager.getStoreStats());
+        stats.put("topics", topicInfos());
+        stats.put("consumers", sessions.values().stream()
+                .sorted(Comparator.comparing(ConsumerSession::getId))
+                .map(session -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    Map<String, Object> snapshot = session.snapshot();
+                    item.put("id", snapshot.get("id"));
+                    item.put("group", snapshot.get("group"));
+                    item.put("paused", snapshot.get("paused"));
+                    item.put("queued", snapshot.get("queued"));
+                    item.put("queueCapacity", snapshot.get("queueCapacity"));
+                    item.put("dedupHits", snapshot.get("dedupHits"));
+                    item.put("dispatcher", snapshot.get("dispatcher"));
+                    return item;
+                })
+                .toList());
+        return stats;
+    }
+
+    private Map<String, Object> brokerInfo() {        Map<String, Object> info = new LinkedHashMap<>();
         info.put("host", config.getBrokerHost());
         info.put("port", config.getBrokerPort());
         info.put("messages", brokerManager.getMessageCount());
         info.put("store", brokerManager.getStoreStats());
+        info.put("paused", brokerManager.getPausedCount());
         info.put("groups", groupManager.getGroupMap().size());
         info.put("deadLetters", deadLetterQueue.size());
         info.put("inFlight", brokerManager.getInFlightCount());

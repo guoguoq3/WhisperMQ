@@ -33,4 +33,8 @@ public class MethodType {
     public static final String ERROR = "ERROR";
     /** 死信重放（消费者 -> Broker） */
     public static final String DEAD_LETTER_REPLAY = "DEAD_LETTER_REPLAY";
+    /** 消费者暂停投递（背压，P1 Stage D） */
+    public static final String C_PAUSE = "C_PAUSE";
+    /** 消费者恢复投递；Broker 收到后按位点补投 */
+    public static final String C_RESUME = "C_RESUME";
 }

@@ -79,6 +79,22 @@ public class MqConfigProperties {
     /** 保留策略检查间隔（毫秒，默认 60 秒） */
     private long retentionCheckIntervalMillis = 60000;
 
+    //背压、去重、鉴权（P1 Stage D）
+    /** 是否启用消费者背压暂停投递 */
+    private boolean backpressureEnabled = true;
+    /** 队列满时暂停投递的时长（毫秒） */
+    private long backpressurePauseMillis = 3000;
+    /** 队列回落到该比例以下时恢复投递（0~1） */
+    private double backpressureResumeThreshold = 0.5;
+    /** 消费端是否对 messageId 去重 */
+    private boolean dedupEnabled = true;
+    /** 去重缓存条数（0 表示关闭） */
+    private int dedupCacheSize = 1000;
+    /** 是否开启 token 鉴权（默认关闭，兼容旧客户端） */
+    private boolean authEnabled = false;
+    /** 共享鉴权 token */
+    private String authToken = "";
+
     //消费端业务线程池 / 控制请求确认（P1）
     /** 消费者业务线程数（0 = 按 CPU 核数自动，默认：0） */
     private int consumerWorkerThreads = 0;

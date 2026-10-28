@@ -6,6 +6,7 @@ import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.constant.DeadType;
 import org.guoguo.common.constant.MethodType;
 import org.guoguo.common.pojo.DTO.ConsumerAckReqDTO;
+import org.guoguo.common.pojo.DTO.ConsumerFlowControlDTO;
 import org.guoguo.common.pojo.DTO.DeadLetterDTO;
 import org.guoguo.common.pojo.DTO.DeadLetterReplayReqDTO;
 import org.guoguo.common.pojo.DTO.PushMessageDTO;
@@ -48,11 +49,19 @@ public class MqConsumerManager extends MqConsumer {
     private final Map<String, SubscribeReqDTO> subscriptionMap = new ConcurrentHashMap<>();
     // 本轮投递中已经调用过 reject() 的消息，用于避免 ACK_FAIL 与死信重试双重重投
     private final Set<String> rejectedMessageIds = ConcurrentHashMap.newKeySet();
+    // 消费端去重（Stage D）：只记录成功处理过的 messageId
+    private final org.guoguo.consumer.dispatch.DedupCache dedupCache;
+    // 背压状态：已向 Broker 申请暂停投递，直到队列回落
+    private volatile boolean paused = false;
+    private volatile long pausedUntil = 0;
 
     // 仅注入配置，调用父类构造（父类已处理配置依赖）
     @Autowired
     public MqConsumerManager(MqConfigProperties config) {
         super(config); // 调用父类 MqConsumer 的构造函数，传入配置
+        this.dedupCache = config.isDedupEnabled() && config.getDedupCacheSize() > 0
+                ? new org.guoguo.consumer.dispatch.DedupCache(config.getDedupCacheSize())
+                : null;
     }
 
     // ------------------------------------------------------------------ 入组 / 退组
@@ -171,6 +180,9 @@ public class MqConsumerManager extends MqConsumer {
      */
     @Override
     protected void onReconnected() {
+        // 重连后 Broker 侧是新连接，旧的暂停状态已随断开清除
+        paused = false;
+        pausedUntil = 0;
         if (currentGroupId == null) {
             log.info("WhisperMQ 消费者重连完成，尚未入组，无需恢复");
             return;
@@ -192,7 +204,8 @@ public class MqConsumerManager extends MqConsumer {
     public void dispatchPush(String messageId, String topic, MqMessage message) {
         boolean accepted = dispatcher.submit(topic, () -> processPush(messageId, topic, message));
         if (!accepted) {
-            log.warn("WhisperMQ 业务线程池已满，消息{}暂不处理（不 ACK，等待 Broker 超时重投）", messageId);
+            log.warn("WhisperMQ 业务线程池已满，消息{}暂不处理，向 Broker 申请暂停投递", messageId);
+            pauseDelivery("业务队列已满");
         }
     }
 
@@ -201,8 +214,19 @@ public class MqConsumerManager extends MqConsumer {
         // 每次投递开始清除上一轮留下的拒绝标记
         rejectedMessageIds.remove(messageId);
 
+        // 去重：已成功处理过的消息（ACK 丢失/超时重投/再均衡）直接确认，不再执行业务
+        if (dedupCache != null && dedupCache.isDuplicate(messageId)) {
+            log.info("WhisperMQ 检测到重复投递，跳过业务处理并 ACK：{}", messageId);
+            sendAck(messageId, ACK_SUCCESS, message.getPartition());
+            maybeResume();
+            return;
+        }
+
         boolean success = handlePushMessage(messageId, topic, message);
         if (success) {
+            if (dedupCache != null) {
+                dedupCache.mark(messageId);
+            }
             // 成功消费后清理死信重试计数，避免按消息泄漏
             deadLetterMap.remove(messageId);
             sendAck(messageId, ACK_SUCCESS, message.getPartition());
@@ -213,6 +237,65 @@ public class MqConsumerManager extends MqConsumer {
             sendAck(messageId, ACK_FAIL, message.getPartition());
             log.warn("WhisperMQ 消费者处理消息{}失败，发送FAIL ACK，等待 Broker 重投", messageId);
         }
+        maybeResume();
+    }
+
+    // ------------------------------------------------------------------ 背压与去重指标
+
+    public boolean isPaused() {
+        return paused;
+    }
+
+    public long getDedupHits() {
+        return dedupCache == null ? 0 : dedupCache.getHits();
+    }
+
+    public int getQueued() {
+        return dispatcher.queued();
+    }
+
+    public int getQueueCapacity() {
+        return dispatcher.capacity();
+    }
+
+    /** 队列满：向 Broker 申请暂停投递（带节流，避免刷屏） */
+    private void pauseDelivery(String reason) {
+        if (!config.isBackpressureEnabled() || currentGroupId == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (paused && pausedUntil > now) {
+            return;
+        }
+        long pauseMillis = Math.max(500, config.getBackpressurePauseMillis());
+        paused = true;
+        pausedUntil = now + pauseMillis;
+        ConsumerFlowControlDTO request = new ConsumerFlowControlDTO();
+        request.setGroupId(currentGroupId);
+        request.setDurationMillis(pauseMillis);
+        request.setReason(reason);
+        sendFrame(buildRpc(MethodType.C_PAUSE, request));
+        log.info("WhisperMQ 消费者队列已满，暂停 Broker 投递 {}ms（原因：{}）", pauseMillis, reason);
+    }
+
+    /** 队列回落到水位以下：恢复投递，Broker 会按组位点补投 */
+    private void maybeResume() {
+        if (!paused) {
+            return;
+        }
+        int capacity = dispatcher.capacity();
+        double threshold = Math.min(1.0, Math.max(0.0, config.getBackpressureResumeThreshold()));
+        if (capacity > 0 && dispatcher.queued() > capacity * threshold) {
+            return;
+        }
+        paused = false;
+        pausedUntil = 0;
+        ConsumerFlowControlDTO request = new ConsumerFlowControlDTO();
+        request.setGroupId(currentGroupId);
+        request.setReason("队列已回落");
+        sendFrame(buildRpc(MethodType.C_RESUME, request));
+        log.info("WhisperMQ 消费者队列已回落（queued={}/{}），恢复 Broker 投递",
+                dispatcher.queued(), capacity);
     }
 
     /**
@@ -352,6 +435,7 @@ public class MqConsumerManager extends MqConsumer {
         rpcDto.setRequest(true);
         rpcDto.setMethodType(methodType);
         rpcDto.setJson(JSON.toJSONString(body));
+        rpcDto.setToken(config.getAuthToken());
         return JSON.toJSONString(rpcDto);
     }
 }

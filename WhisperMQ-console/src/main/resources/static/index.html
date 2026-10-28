@@ -781,6 +781,8 @@
           <span>成功 <b>${c.success}</b></span>
           <span>失败 <b>${c.failed}</b></span>
           <span>线程 <span class="thread">${esc(c.lastThread || '-')}</span></span>
+          ${c.paused ? '<span class="tag">已暂停投递</span>' : ''}
+          <span>去重命中 <b>${c.dedupHits || 0}</b></span>
           ${c.dispatcher ? `<span>队列 提交 <b>${c.dispatcher.submitted}</b> / 完成 <b>${c.dispatcher.completed}</b> / 拒绝 <b>${c.dispatcher.rejected}</b></span>` : ''}
         </div>
         ${(c.recent && c.recent.length) ? `<div class="recent">${c.recent.slice(0, 3).map(m => `

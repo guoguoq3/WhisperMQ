@@ -148,6 +148,10 @@ public class ConsumerSession {
         snap.put("lastThread", lastThread);
         snap.put("lastError", lastError);
         snap.put("alive", consumer.getDispatcher() != null);
+        snap.put("paused", consumer.isPaused());
+        snap.put("dedupHits", consumer.getDedupHits());
+        snap.put("queued", consumer.getQueued());
+        snap.put("queueCapacity", consumer.getQueueCapacity());
         snap.put("dispatcher", Map.of(
                 "submitted", consumer.getDispatcher().getSubmitted(),
                 "completed", consumer.getDispatcher().getCompleted(),
