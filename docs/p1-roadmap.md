@@ -25,7 +25,7 @@ Stage A  兼容底座（本次）
   └─ A4 消费端指标暴露
         │
         ▼
-Stage B  分区投递与再均衡
+Stage B  分区投递与再均衡（已完成）
   ├─ B1 (topic, partition) → consumer 分配表
   ├─ B2 加入/离开触发再均衡（epoch 防脑裂）
   ├─ B3 位点按分区推进 + 按分区回放
@@ -134,7 +134,7 @@ Stage E  多 Broker
 | Segment 改造影响现有恢复 | 保留旧单文件读取路径，新写入按配置切换 |
 | 多 Broker 引入一致性 bug | 先单机多进程验证，再做副本；位点/消息 ID 不编码 broker 信息 |
 
-## 6. 本次（Stage A）落地清单
+## 6. 落地清单
 
 - [x] `RpcMessageDTO.version` + Broker 版本校验 + 单测
 - [x] `MqMessage.partition`、`TopicMetadata`（分区数解析/计算，默认 1）
@@ -144,4 +144,23 @@ Stage E  多 Broker
 - [x] 消费端 dispatcher 指标暴露到控制台（submitted/completed/failed/rejected）
 - [x] 控制台展示分区与位点
 
-后续阶段按 §1 顺序推进；B 阶段的分配表设计见 §3.1/§3.3。
+### Stage B（已完成）
+
+- [x] `PartitionAssigner`：消费者 ID 排序后轮询分配，输入稳定则结果稳定；
+- [x] `ConsumerGroup` 增加订阅者集合（只有显式 GROUP_SUBSCRIBE 的消费者参与分配）、
+      分配表与 `assignmentEpoch`；
+- [x] 消费者加入 / 离开 / 订阅变化时触发再均衡；owner 下线时惰性重分配；
+- [x] `BrokerManager` 分区 topic 按 owner 投递，重投/死信重试也走 owner；
+      owner 与消息 Tag 不匹配时回退到 Tag 匹配消费者（并记录告警）；
+- [x] 控制台展示每个 topic 的分区数、partition→consumer 分配与 epoch；
+- [x] 2 分区端到端测试：再均衡前后不丢不重、同消费者同分区顺序递增。
+
+**Stage B 已知限制**
+
+- 分配用轮询取模，消费者上下线会让部分分区换 owner（Kafka 也如此），
+  再均衡期间没有暂停投递；
+- 消费者数 > 分区数时，多出的消费者暂时空闲；
+- 同组 Tag 不一致时，owner 与 Tag 冲突会回退到其它消费者，该分区的严格顺序被放宽；
+- 分区数变更（扩分区）暂不迁移已有位点，需要后续管理接口配合。
+
+后续按 §1 推进：C（存储/保留）→ D（背压/幂等/安全）→ E（多 Broker）。

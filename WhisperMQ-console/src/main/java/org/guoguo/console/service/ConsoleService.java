@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.guoguo.broker.ConsumerGroup.ConsumerGroupManager;
 import org.guoguo.broker.core.BrokerManager;
 import org.guoguo.broker.core.MqBroker;
+import org.guoguo.broker.core.TopicMetadata;
 import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.pojo.DTO.DeadLetterDTO;
 import org.guoguo.common.pojo.DTO.PushMessageDTO;
@@ -46,6 +47,7 @@ public class ConsoleService {
     private final BrokerManager brokerManager;
     private final ConsumerGroupManager groupManager;
     private final DeadLetterQueue deadLetterQueue;
+    private final TopicMetadata topicMetadata;
 
     /**
      * 仅用于保证 Bean 初始化顺序：ConsoleService 依赖 MqBroker 之后，
@@ -63,12 +65,14 @@ public class ConsoleService {
                           BrokerManager brokerManager,
                           ConsumerGroupManager groupManager,
                           DeadLetterQueue deadLetterQueue,
+                          TopicMetadata topicMetadata,
                           MqBroker broker) {
         this.config = config;
         this.consoleProperties = consoleProperties;
         this.brokerManager = brokerManager;
         this.groupManager = groupManager;
         this.deadLetterQueue = deadLetterQueue;
+        this.topicMetadata = topicMetadata;
         this.broker = broker;
     }
 
@@ -113,6 +117,10 @@ public class ConsoleService {
         out.put("messageId", result.getMessageId());
         out.put("message", result.getMessage());
         out.put("enduring", message.isEnduring());
+        if (ok) {
+            out.put("partition", topicMetadata.partitionOf(topic, message.getBizKey(),
+                    result.getMessageId(), message.getPartition()));
+        }
         return out;
     }
 
@@ -238,6 +246,13 @@ public class ConsoleService {
             item.put("offsets", new LinkedHashMap<>(group.offsetView()));
             item.put("tags", new LinkedHashMap<>(group.getTopicConsumerTags()));
             item.put("inFlight", inFlightByGroup.getOrDefault(group.getGroupId(), 0));
+            Map<String, Integer> partitions = new LinkedHashMap<>();
+            for (String topic : group.getSubscribeMap().keySet()) {
+                partitions.put(topic, topicMetadata.partitionsOf(topic));
+            }
+            item.put("partitions", partitions);
+            item.put("assignment", group.assignmentView());
+            item.put("assignmentEpoch", group.getAssignmentEpoch());
             list.add(item);
         }
         list.sort(Comparator.comparing(item -> String.valueOf(item.get("groupId"))));
@@ -340,10 +355,15 @@ public class ConsoleService {
         return list;
     }
 
-    /** 查询某组某主题的当前位点（自检使用） */
+    /** 查询某组某主题的当前位点（分区 0 的兼容视图） */
     public String offsetOf(String groupId, String topic) {
+        return offsetOf(groupId, topic, 0);
+    }
+
+    /** 查询某组某主题某分区的当前位点 */
+    public String offsetOf(String groupId, String topic, int partition) {
         ConsumerGroup group = groupManager.getGroupMap().get(groupId);
-        return group == null ? null : group.getTopicOffsetMap().get(topic);
+        return group == null ? null : group.getOffset(topic, partition);
     }
 
     public ConsumerSession sessionOf(String id) {

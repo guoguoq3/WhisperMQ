@@ -35,6 +35,8 @@ class ConsumerGroupTagsTest {
         online("c2");
         group.addConsumerTopicTags("T", "c1", List.of("TAG1"));
         group.addConsumerTopicTags("T", "c2", List.of("TAG2"));
+        group.addSubscriber("T", "c1");
+        group.addSubscriber("T", "c2");
 
         assertEquals(List.of("c1"), group.getConsumersByTopicAndTag("T", "TAG1"));
         assertEquals(List.of("c2"), group.getConsumersByTopicAndTag("T", "TAG2"));
@@ -43,8 +45,9 @@ class ConsumerGroupTagsTest {
 
     @Test
     void tagsRegisteredBeforeJoinSurviveWhenConsumerGoesOnline() {
-        // 订阅可能先于入组到达：先存 Tag，入组后应立即可投递
+        // 订阅可能先于入组到达：先存 Tag/订阅关系，入组后应立即可投递
         group.addConsumerTopicTags("T", "c1", List.of("TAG1"));
+        group.addSubscriber("T", "c1");
         assertTrue(group.getConsumersByTopicAndTag("T", "TAG1").isEmpty(), "未在线时不应被选中");
 
         online("c1");
@@ -57,6 +60,8 @@ class ConsumerGroupTagsTest {
         online("empty");
         group.addConsumerTopicTags("T", "wildcard", List.of("*"));
         group.addConsumerTopicTags("T", "empty", List.of());
+        group.addSubscriber("T", "wildcard");
+        group.addSubscriber("T", "empty");
 
         assertEquals(2, group.getConsumersByTopicAndTag("T", "ANY_TAG").size());
         assertEquals(2, group.getConsumersByTopicAndTag("T", null).size());
@@ -67,6 +72,8 @@ class ConsumerGroupTagsTest {
         online("c1");
         group.addConsumerTopicTags("T1", "c1", List.of("TAG1"));
         group.addConsumerTopicTags("T2", "c1", List.of("TAG2"));
+        group.addSubscriber("T1", "c1");
+        group.addSubscriber("T2", "c1");
 
         assertEquals(List.of("c1"), group.getConsumersByTopicAndTag("T1", "TAG1"));
         assertTrue(group.getConsumersByTopicAndTag("T1", "TAG2").isEmpty());
@@ -77,6 +84,7 @@ class ConsumerGroupTagsTest {
     void removeConsumerClearsItsTags() {
         online("c1");
         group.addConsumerTopicTags("T", "c1", List.of("TAG1"));
+        group.addSubscriber("T", "c1");
 
         group.removeConsumer("c1");
 

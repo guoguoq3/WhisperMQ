@@ -90,21 +90,26 @@ public class SelfTestService {
         String topic = "CONSOLE_SELF_BASIC_TOPIC_" + run.getSuffix();
         ConsumerSession session = console.createConsumer(group, topic, List.of("*"), "SUCCESS");
         try {
-            List<String> ids = new ArrayList<>();
+            Map<Integer, String> lastIdByPartition = new java.util.LinkedHashMap<>();
             for (int i = 0; i < 3; i++) {
                 Map<String, Object> result = console.send(topic, "TAG1", "self-basic-" + i, true, null);
                 if (!Boolean.TRUE.equals(result.get("ok"))) {
                     run.fail("发送 → 消费 → ACK → 位点", "发送失败：" + result);
                     return;
                 }
-                ids.add(String.valueOf(result.get("messageId")));
+                int partition = result.get("partition") instanceof Number n ? n.intValue() : 0;
+                lastIdByPartition.put(partition, String.valueOf(result.get("messageId")));
             }
             boolean received = waitUntil(() -> session.getReceived() >= 3, 10_000);
-            String lastId = ids.get(ids.size() - 1);
-            boolean offsetOk = waitUntil(() -> lastId.equals(console.offsetOf(group, topic)), 5_000);
+            boolean offsetOk = true;
+            for (Map.Entry<Integer, String> entry : lastIdByPartition.entrySet()) {
+                final int partition = entry.getKey();
+                final String expected = entry.getValue();
+                offsetOk &= waitUntil(() -> expected.equals(console.offsetOf(group, topic, partition)), 5_000);
+            }
             run.step("发送 3 条 → 消费 → ACK → 位点前进", received && offsetOk,
-                    "received=" + session.getReceived() + "，offset=" + console.offsetOf(group, topic)
-                            + "，期望 offset=" + lastId);
+                    "received=" + session.getReceived() + "，各分区位点=" + lastIdByPartition
+                            + "，实际分区位点=" + describeOffsets(group, topic, lastIdByPartition.keySet()));
         } finally {
             console.closeConsumer(session.getId());
         }
@@ -189,6 +194,14 @@ public class SelfTestService {
             sleep(100);
         }
         return null;
+    }
+
+    private String describeOffsets(String group, String topic, java.util.Set<Integer> partitions) {
+        Map<Integer, String> offsets = new java.util.LinkedHashMap<>();
+        for (Integer partition : partitions) {
+            offsets.put(partition, console.offsetOf(group, topic, partition));
+        }
+        return offsets.toString();
     }
 
     private boolean waitUntil(BooleanSupplier condition, long timeoutMillis) {

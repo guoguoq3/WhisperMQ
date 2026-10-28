@@ -809,12 +809,13 @@
       return;
     }
     $('#groups').innerHTML = `<div class="table-wrap"><table>
-      <thead><tr><th>组</th><th>在线 / 在途</th><th>订阅</th><th>位点</th></tr></thead>
+      <thead><tr><th>组</th><th>在线 / 在途</th><th>订阅</th><th>分区</th><th>位点</th></tr></thead>
       <tbody>${groups.map(g => `
         <tr class="clickable" data-group="${esc(g.groupId)}" title="点击查看详情">
           <td class="mono">${esc(g.groupId)}</td>
           <td>${g.onlineConsumers} / ${g.inFlight}</td>
           <td>${(g.subscriptions || []).map(s => `<span class="tag">${esc(s)}</span>`).join(' ') || '-'}</td>
+          <td class="mono">${Object.entries(g.partitions || {}).map(([t, n]) => `${esc(t)}:${esc(n)}`).join('<br>') || '-'}</td>
           <td class="mono">${Object.entries(g.offsets || {}).map(([t, o]) => `${esc(t)}=${esc(shortId(o))}`).join('<br>') || '-'}</td>
         </tr>`).join('')}</tbody>
     </table></div>`;
@@ -997,6 +998,10 @@
         <dt>在线消费者</dt><dd>${group.onlineConsumers}</dd>
         <dt>在途消息</dt><dd>${group.inFlight}</dd>
         <dt>订阅主题</dt><dd class="kv">${(group.subscriptions || []).map(s => `<span class="tag">${esc(s)}</span>`).join('') || '-'}</dd>
+        <dt>分区数</dt><dd class="mono">${Object.entries(group.partitions || {}).map(([t, n]) => `${esc(t)} : ${esc(n)}`).join('，') || '-'}</dd>
+        <dt>分区分配</dt><dd>${Object.entries(group.assignment || {}).map(([t, m]) =>
+          `<div class="mono">${esc(t)} → ${Object.entries(m).map(([p, c]) => 'P' + esc(p) + ':' + esc(shortId(c))).join(' / ')}</div>`).join('') || '-'}</dd>
+        <dt>分配 epoch</dt><dd class="mono">${esc(group.assignmentEpoch ?? 0)}</dd>
         <dt>组位点</dt><dd>${Object.entries(group.offsets || {}).map(([t, o]) =>
           `<div class="mono">${esc(t)} → ${esc(o)}</div>`).join('') || '-'}</dd>
         <dt>消费者级 Tag</dt><dd>${tagRows}</dd>

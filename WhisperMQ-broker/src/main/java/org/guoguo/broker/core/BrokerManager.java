@@ -192,7 +192,7 @@ public class BrokerManager {
             return;
         }
 
-        String targetConsumerId = pickConsumer(group, topic, messageTag, messageId, null);
+        String targetConsumerId = selectTarget(group, message, messageId, null);
         if (targetConsumerId == null) {
             log.info("WhisperMQ Broker 消费者组{}无订阅Tag:{}的在线消费者，消息{}暂不推送",
                     groupId, messageTag, messageId);
@@ -236,6 +236,30 @@ public class BrokerManager {
                     messageId, group.getGroupId(), targetConsumerId, e);
             return false;
         }
+    }
+
+    /**
+     * 选择投递目标。
+     *
+     * <p>分区 topic（分区数 &gt; 1）：优先投给该分区的 owner，保证同一分区落到同一个消费者；
+     * 若 owner 的 Tag 过滤不匹配（同组 tag 不一致），回退到 tag 匹配的消费者并告警
+     * —— 这种情况下该分区的严格顺序会被放宽（与 docs/p1-roadmap.md §3.1 一致）。</p>
+     *
+     * <p>单分区 topic：保持旧的按消息 ID 取模的组内负载均衡。</p>
+     */
+    private String selectTarget(ConsumerGroup group, MqMessage message, String messageId, String excludeConsumerId) {
+        String topic = message.getTopic();
+        if (topicMetadata.partitionsOf(topic) > 1) {
+            String owner = groupManager.partitionOwner(group, topic, message.getPartition());
+            if (owner != null) {
+                if (group.accepts(topic, owner, message.getTag())) {
+                    return owner;
+                }
+                log.warn("WhisperMQ Broker 分区{}的owner {}不接受tag {}，回退到tag匹配消费者（该分区顺序被放宽）",
+                        message.getPartition(), owner, message.getTag());
+            }
+        }
+        return pickConsumer(group, topic, message.getTag(), messageId, excludeConsumerId);
     }
 
     /**
@@ -332,8 +356,8 @@ public class BrokerManager {
                     record.getMessageId(), record.getMessage(), DeadType.CONSUME_TIMEOUT, record.getAttempts());
             return;
         }
-        String targetConsumerId = pickConsumer(group, record.getTopic(),
-                record.getMessage().getTag(), record.getMessageId(), record.getConsumerId());
+        String targetConsumerId = selectTarget(group, record.getMessage(), record.getMessageId(),
+                record.getConsumerId());
         if (targetConsumerId == null) {
             log.warn("WhisperMQ Broker 组{}暂无可用消费者，消息{}等待下一轮重投",
                     record.getGroupId(), record.getMessageId());
@@ -462,8 +486,7 @@ public class BrokerManager {
         }
         // 允许重新登记在途记录（原投递记录可能还在）
         inFlightMap.remove(inFlightKey(groupId, originMessageId));
-        String targetConsumerId = pickConsumer(group, mqMessage.getTopic(), mqMessage.getTag(),
-                originMessageId, null);
+        String targetConsumerId = selectTarget(group, mqMessage, originMessageId, null);
         if (targetConsumerId == null) {
             log.warn("WhisperMQ Broker 死信消息{}暂无可用消费者", originMessageId);
             return;

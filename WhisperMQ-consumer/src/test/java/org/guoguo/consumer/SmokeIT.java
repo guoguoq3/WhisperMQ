@@ -3,6 +3,7 @@ package org.guoguo.consumer;
 import com.alibaba.fastjson.JSON;
 import org.guoguo.broker.BrokerApplication;
 import org.guoguo.broker.ConsumerGroup.ConsumerGroupManager;
+import org.guoguo.broker.core.TopicMetadata;
 import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.constant.MethodType;
 import org.guoguo.common.pojo.DTO.DeadLetterDTO;
@@ -32,7 +33,12 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -420,6 +426,108 @@ public class SmokeIT {
 
         producer.close();
         consumer.close();
+    }
+
+    @Test
+    @Order(11)
+    void partitionedTopicKeepsOrderAndDoesNotLoseMessagesAcrossRebalance() throws Exception {
+        String group = "SMOKE_PARTITION_GROUP";
+        String topic = "SMOKE_PARTITION_TOPIC";
+        TopicMetadata metadata = broker.getBean(TopicMetadata.class);
+        metadata.setPartitions(topic, 2);
+
+        // 分开挑出落在两个分区的 bizKey（分区只由 bizKey 决定）
+        List<String> keysP0 = new ArrayList<>();
+        List<String> keysP1 = new ArrayList<>();
+        for (int i = 0; keysP0.size() < 5 || keysP1.size() < 5; i++) {
+            String key = "pkey-" + i;
+            int partition = metadata.partitionOf(topic, key, "0", 0);
+            if (partition == 0 && keysP0.size() < 5) {
+                keysP0.add(key);
+            } else if (partition == 1 && keysP1.size() < 5) {
+                keysP1.add(key);
+            }
+        }
+
+        Map<String, Integer> receivedTimes = new ConcurrentHashMap<>();
+        Map<String, String> consumerOfPayload = new ConcurrentHashMap<>();
+        Map<String, List<String>> orderByConsumer = new ConcurrentHashMap<>();
+        Map<String, Integer> partitionOfPayload = new ConcurrentHashMap<>();
+        AtomicInteger sequence = new AtomicInteger();
+
+        MqConsumerManager consumerA = newConsumer(group);
+        subscribe(consumerA, topic, List.of("*"),
+                partitionRecorder("a", receivedTimes, consumerOfPayload, orderByConsumer));
+
+        MqProducer producer = new MqProducer(clientConfig);
+        producer.start();
+        sendPartitioned(producer, metadata, topic, keysP0, keysP1, partitionOfPayload, sequence);
+
+        // 第二个消费者加入并订阅 -> 触发再均衡，两个消费者各分担一个分区
+        MqConsumerManager consumerB = newConsumer(group);
+        subscribe(consumerB, topic, List.of("*"),
+                partitionRecorder("b", receivedTimes, consumerOfPayload, orderByConsumer));
+        sendPartitioned(producer, metadata, topic, keysP0, keysP1, partitionOfPayload, sequence);
+
+        awaitTrue(() -> receivedTimes.size() == 20, 20_000);
+        Thread.sleep(300);
+
+        assertEquals(20, receivedTimes.size(), "20 条消息都应被消费");
+        receivedTimes.forEach((payload, times) -> assertEquals(1, times, "消息被重复消费：" + payload));
+        assertTrue(consumerOfPayload.containsValue("b"), "再均衡后新消费者应接管部分分区");
+
+        for (Map.Entry<String, List<String>> entry : orderByConsumer.entrySet()) {
+            List<String> order;
+            synchronized (entry.getValue()) {
+                order = new ArrayList<>(entry.getValue());
+            }
+            Map<Integer, Integer> lastIndexByPartition = new HashMap<>();
+            for (String payload : order) {
+                int index = Integer.parseInt(payload.substring(1));
+                int partition = partitionOfPayload.get(payload);
+                Integer previous = lastIndexByPartition.put(partition, index);
+                if (previous != null) {
+                    assertTrue(index > previous, "消费者 " + entry.getKey() + " 在分区 " + partition
+                            + " 上的顺序错乱：" + previous + " -> " + index);
+                }
+            }
+        }
+
+        producer.close();
+        consumerA.close();
+        consumerB.close();
+    }
+
+    private static IMessageListener partitionRecorder(String consumerId,
+                                                      Map<String, Integer> receivedTimes,
+                                                      Map<String, String> consumerOfPayload,
+                                                      Map<String, List<String>> orderByConsumer) {
+        return (message, messageId) -> {
+            String payload = message.getPayload();
+            receivedTimes.merge(payload, 1, Integer::sum);
+            consumerOfPayload.put(payload, consumerId);
+            orderByConsumer.computeIfAbsent(consumerId, k -> Collections.synchronizedList(new ArrayList<>()))
+                    .add(payload);
+            return true;
+        };
+    }
+
+    private static void sendPartitioned(MqProducer producer, TopicMetadata metadata, String topic,
+                                        List<String> keysP0, List<String> keysP1,
+                                        Map<String, Integer> partitionOfPayload, AtomicInteger sequence) {
+        List<String> keys = new ArrayList<>(keysP0);
+        keys.addAll(keysP1);
+        for (String bizKey : keys) {
+            String payload = "m" + sequence.getAndIncrement();
+            MqMessageEnduring message = new MqMessageEnduring();
+            message.setTopic(topic);
+            message.setTag("T");
+            message.setBizKey(bizKey);
+            message.setPayload(payload);
+            Result<String> result = producer.send(message);
+            assertEquals(200, result.getCode(), "发送失败：" + result.getMessage());
+            partitionOfPayload.put(payload, metadata.partitionOf(topic, bizKey, result.getMessageId(), 0));
+        }
     }
 
     /** 供本地排查用：打印临时数据目录 */

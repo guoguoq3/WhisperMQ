@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.guoguo.broker.core.BrokerManager;
+import org.guoguo.broker.core.TopicMetadata;
 import org.guoguo.broker.util.OffsetPersistUtil;
 import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.pojo.DTO.SubscribeReqDTO;
@@ -32,16 +33,18 @@ public class ConsumerGroupManager {
     private final OffsetPersistUtil offsetPersistUtil;
     private final BrokerManager brokerManager;
     private final MqConfigProperties config;
+    private final TopicMetadata topicMetadata;
     //这里返回一个不可修改的视图
     public Map<String, ConsumerGroup> getGroupMap() {
         return Collections.unmodifiableMap(groupMap);
     }
     @Autowired
     public ConsumerGroupManager(OffsetPersistUtil offsetPersistUtil, BrokerManager brokerManager,
-                                MqConfigProperties config) {
+                                MqConfigProperties config, TopicMetadata topicMetadata) {
         this.offsetPersistUtil = offsetPersistUtil;
         this.brokerManager = brokerManager;
         this.config = config;
+        this.topicMetadata = topicMetadata;
     }
 
     // return new HashMap<>(groupMap); 深拷贝方法
@@ -88,6 +91,43 @@ public class ConsumerGroupManager {
             log.info("WhisperMQ=====================>消费者组不存在 创建消费者组：{}", groupId);
             return consumerGroup;
         });
+    }
+
+    /**
+     * 重新计算某个 topic 的分区分配（P1 Stage B）。
+     *
+     * <p>只有分区数 &gt; 1 的 topic 才维护分配表；分区数为 1 时沿用旧的路由逻辑
+     * （按消息 ID 取模做组内负载均衡），保证升级前行为不变。</p>
+     *
+     * <p>分配变化不暂停投递：在途消息仍由原 owner 确认，新消息按新分配投递；
+     * 位点按分区推进，因此不会因为换 owner 而丢消息或回退。</p>
+     */
+    public synchronized void rebalance(ConsumerGroup group, String topic) {
+        if (group == null || topic == null) {
+            return;
+        }
+        int partitions = topicMetadata.partitionsOf(topic);
+        if (partitions <= 1) {
+            group.clearAssignment(topic);
+            return;
+        }
+        List<String> candidates = group.onlineSubscribers(topic);
+        Map<Integer, String> assignment = PartitionAssigner.assign(candidates, partitions);
+        group.updateAssignment(topic, assignment);
+        log.info("WhisperMQ Broker 组{} 主题{} 再均衡完成：epoch={}，分区数={}，候选消费者={}，分配={}",
+                group.getGroupId(), topic, group.getAssignmentEpoch(), partitions, candidates, assignment);
+    }
+
+    /**
+     * 取某个分区的 owner；如果分配缺失或 owner 已下线/未订阅，先触发一次再均衡再取。
+     */
+    public String partitionOwner(ConsumerGroup group, String topic, int partition) {
+        String owner = group.getPartitionOwner(topic, partition);
+        if (owner != null && group.isSubscribed(topic, owner)) {
+            return owner;
+        }
+        rebalance(group, topic);
+        return group.getPartitionOwner(topic, partition);
     }
 
     /**
@@ -138,6 +178,8 @@ public class ConsumerGroupManager {
 
         // 记录组级订阅配置 + 当前消费者自己的 Tag
         consumerGroup.addSubscribe(subscribeReqDTO, ctx);
+        // 订阅关系变化后重新分配分区（分区数 > 1 才生效）
+        rebalance(consumerGroup, topic);
 
         boolean hasOffset = consumerGroup.hasOffset(topic);
         if (!hasOffset) {
@@ -218,6 +260,8 @@ public class ConsumerGroupManager {
                 log.info("WhisperMQ Broker 消费者{}加入组{}，按组配置初始化为主题{}的Tag：{}",
                         consumerId, groupId, topic, entry.getValue().getTags());
             }
+            // 新连接尚未显式订阅，不会进入候选；这里再均衡一次用于清理已下线 owner
+            rebalance(consumerGroup, topic);
         }
     }
 
@@ -262,6 +306,10 @@ public class ConsumerGroupManager {
         }
         consumerGroup.removeConsumer(consumerId);
         consumerGroup.removeConsumerTags(consumerId); // 清理Tag订阅
+        // 掉线后重新分配分区，把该消费者负责的分区交给其他在线消费者
+        for (String topic : consumerGroup.getSubscribeMap().keySet()) {
+            rebalance(consumerGroup, topic);
+        }
         log.info("WhisperMQ Broker 消费者{}离开组{}，当前组内在线消费者数：{}",
                 consumerId, groupId, consumerGroup.getOnlineConsumers().size());
         // 组内无消费者时，自动销毁组（可选：也可保留组配置）
