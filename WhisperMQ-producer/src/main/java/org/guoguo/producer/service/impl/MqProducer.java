@@ -182,7 +182,7 @@ public class MqProducer implements IMqProducer {
         Channel currentChannel = this.channel;
         if (currentChannel == null || !currentChannel.isActive()) {
             log.warn("生产者发送失败：与 Broker 的连接不可用，消息ID：{}", traceId);
-            return Result.build("消息发送失败：Broker 未连接", ResultCodeEnum.FAILED, traceId);
+            return fail("消息发送失败：Broker 未连接", traceId);
         }
 
         RpcMessageDTO rpcMessageDTO = new RpcMessageDTO();
@@ -200,7 +200,9 @@ public class MqProducer implements IMqProducer {
                 traceIdLatchMap.put(traceId, latch);
                 traceIdErrorMap.remove(traceId);
 
-                long waitMillis = (long) (config.getProducerRetryTimeCoefficient() * Math.pow(2L, i));
+                // 系数/次数可能未配置（默认 0）：至少等待 1ms，避免"消息到了 Broker 但本地已判定失败"
+                long waitMillis = Math.max(1L,
+                        (long) (Math.max(1, config.getProducerRetryTimeCoefficient()) * Math.pow(2L, i)));
                 currentChannel.writeAndFlush(JSON.toJSONString(rpcMessageDTO) + "\n");
                 log.info("等待生产者发送消息，重试次数为：{}，消息Id：{}，本次等待{}ms", i, traceId, waitMillis);
 
@@ -211,7 +213,7 @@ public class MqProducer implements IMqProducer {
                 if (brokerError != null) {
                     // Broker 已明确拒绝，重试没有意义
                     log.error("Broker 拒绝消息，不再重试。消息ID：{}，原因：{}", traceId, brokerError);
-                    return Result.build("消息发送失败：" + brokerError, ResultCodeEnum.FAILED, traceId);
+                    return fail("消息发送失败：" + brokerError, traceId);
                 }
                 if (await && latch.getVersion() == currentVersion) {
                     return Result.ok("消息发送成功", traceId);
@@ -219,17 +221,26 @@ public class MqProducer implements IMqProducer {
                 log.warn("生产者第{}次发送等待超时（{}ms），消息id：{}", i, waitMillis, traceId);
             }
             log.info("消息发送超时，返回失败");
-            return Result.build("消息发送超时", ResultCodeEnum.FAILED, traceId);
+            return fail("消息发送超时", traceId);
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             traceIdLatchMap.remove(traceId);
-            return Result.build("消息发送被中断", ResultCodeEnum.FAILED, traceId);
+            return fail("消息发送被中断", traceId);
         } catch (Exception e) {
             traceIdLatchMap.remove(traceId);
             log.error("消息发送异常，消息ID：{}", traceId, e);
-            return Result.build("消息发送失败", ResultCodeEnum.FAILED, traceId);
+            return fail("消息发送失败", traceId);
         }
+    }
+
+    /**
+     * 构造失败结果。
+     * 注意：{@code Result.build(body, ResultCodeEnum, messageId)} 会用枚举自带的 "发送失败"
+     * 覆盖具体原因，这里显式传 code/message，便于控制台和调用方看到真正失败原因。
+     */
+    private Result<String> fail(String message, String traceId) {
+        return Result.build(message, ResultCodeEnum.FAILED.getCode(), message, traceId);
     }
 
     // 关闭资源

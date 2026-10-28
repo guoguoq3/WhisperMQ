@@ -40,9 +40,9 @@ public class MqConfigProperties {
 
     //生产者重试配置
     /** 生产者最大重试次数（默认：3） */
-    private int producerRetryCountLimit ;
+    private int producerRetryCountLimit = 3;
     /** 消费者重试时间系数（默认：500） */
-    private int producerRetryTimeCoefficient ;
+    private int producerRetryTimeCoefficient = 500;
 
     //死信队列配置
     //死信队列最大重试次数（默认为5）

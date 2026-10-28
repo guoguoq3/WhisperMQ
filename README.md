@@ -1,2 +1,96 @@
-开发中 目前以实现基本的消息运转流程 正在进行消息的处理逻辑 
-In the development process, the basic message operation flow has been implemented, and we are currently working on the message processing logic.
+# WhisperMQ
+
+一个用 Java 17 + Netty + Spring Boot 实现的轻量级消息队列（教学 / 本地验证用途）。
+支持 topic、消费者组、消费者级 Tag、位点持久化、ACK 超时重投、死信与重放、断线重连，
+并自带一个 **Web 控制台**：拉取代码后启动控制台进程，即可在浏览器里体验生产/消费全流程。
+
+## 模块
+
+| 模块 | 说明 |
+|---|---|
+| `WhisperMQ-common` | 协议 DTO、实体、配置、雪花 ID |
+| `WhisperMQ-broker` | Broker：接入、路由、in-flight 重投、位点、死信 |
+| `WhisperMQ-producer` | 生产者客户端（发送确认、超时重传、自动重连） |
+| `WhisperMQ-consumer` | 消费者客户端（入组、订阅确认、业务线程池、ACK/拒绝） |
+| `WhisperMQ-console` | Web 控制台：内嵌 Broker + REST API + 单页页面 |
+| `WhisperMQ-test` | 预留的测试模块 |
+
+## 快速开始（Web 控制台）
+
+要求：**JDK 17+**、**Maven 3.8+**（首次构建可用 `-o` 离线参数，前提是依赖已缓存）。
+
+```bash
+# 构建并启动（会自动打包 console 及其依赖模块）
+mvn -o -DskipTests package -pl WhisperMQ-console -am
+java -jar WhisperMQ-console/target/WhisperMQ-console-1.0-SNAPSHOT.jar
+```
+
+或者使用脚本：
+
+```powershell
+./scripts/start-console.ps1      # Windows
+./scripts/start-console.sh       # macOS / Linux
+```
+
+启动后打开 **http://127.0.0.1:8080**。
+控制台进程内嵌 Broker（默认端口 `9999`），页面上创建的消费者/生产者都是**真实 TCP 客户端**，
+走与外部使用完全一致的协议，不是模拟数据。
+
+## 控制台能做什么
+
+- **发送消息**：topic、tag、payload、是否持久化（enduring）
+- **创建消费者**：选择消费组、topic、tag（支持 `*` 与 `TAG_A,TAG_B`），并选择业务行为：
+  - 正常消费 / 一直失败（ACK_FAIL）/ 首次失败（看重投）/ 拒绝并重试（死信链路）/
+    抛异常（验证业务线程隔离）/ 慢消费 500ms
+- **观察 Broker**：消息数、在途数、组数、在线消费者数、死信数
+- **消费者组**：在线消费者、订阅关系、组位点、消费者级 Tag、在途消息
+- **Broker 内存消息**：最近的 `messageMap` 内容
+- **死信队列**：查看并一键**重放**回原消费组
+- **一键自检**：4 个端到端场景（发送→消费→ACK→位点、ACK_FAIL 重投、Tag 隔离、死信重放）
+- **一键 Maven 测试**：在仓库根目录执行 `mvn -o test`，日志实时回显
+
+页面上的所有数据通过 `GET /api/overview` 每 2 秒轮询刷新。
+
+## REST API
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/overview` | Broker / 组 / 消费者 / 消息 / 死信快照 |
+| POST | `/api/messages` | 发送消息 `{topic,tag,payload,enduring}` |
+| POST | `/api/consumers` | 创建消费者 `{group,topic,tags,mode}` |
+| DELETE | `/api/consumers/{id}` | 停止消费者 |
+| PATCH | `/api/consumers/{id}/mode` | 切换业务行为 `{mode}` |
+| GET | `/api/deadletters` | 死信列表 |
+| POST | `/api/deadletters/{id}/replay` | 重放死信 |
+| POST/GET | `/api/test/self` | 启动 / 查询自检 |
+| POST/GET | `/api/test/maven` | 启动 / 查询 Maven 测试 |
+| POST | `/api/test/maven/cancel` | 终止 Maven 测试 |
+
+## 测试
+
+```bash
+# 单元测试（27 个）
+mvn -o test
+
+# 端到端集成测试（自己拉起一个 Broker，监听 19999）
+mvn -o -pl WhisperMQ-consumer -am test -Dtest=SmokeIT -DfailIfNoTests=false
+```
+
+## 配置
+
+- `whisper-mq.*`：Broker / 客户端 / 可靠性参数，见 `MqConfigProperties`
+  （`ack-timeout-millis`、`max-delivery-attempts`、`max-dead-letter-retry-count`、
+  `heartbeat-interval-millis`、`reconnect-*-millis`、`subscribe-timeout-millis` 等）。
+- `whisper-console.*`：控制台参数，见 `WhisperMQ-console/src/main/resources/application.properties`
+  （`maven-command`、`repo-root`、`max-recent-messages`）。
+- 控制台默认数据目录为 `./WhisperMQ-console-data`，与仓库根目录的历史演示数据隔离。
+
+## 已知限制 / 后续计划
+
+- 尚无分区（partition）与多 Broker 副本、选主；
+- 位点是 `group × topic` 单游标，乱序 ACK 仍可能跳过中间消息；
+- 消息全量驻留内存，缺保留策略与分段索引；
+- 无鉴权 / TLS；
+- 业务线程池满时采用“不 ACK + Broker 超时重投”，过载时可能进入死信。
+
+详见 `docs/` 下的架构图。

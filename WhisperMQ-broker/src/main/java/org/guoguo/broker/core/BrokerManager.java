@@ -60,6 +60,20 @@ public class BrokerManager {
     private final FilePersistUtil filePersistUtil;
     private final DeadLetterPersistUtil deadLetterPersistUtil;
 
+    /** 当前在途（已投递未确认）消息数，供控制台观测 */
+    public int getInFlightCount() {
+        return inFlightMap.size();
+    }
+
+    /** 按消费者组统计在途消息数，供控制台观测 */
+    public Map<String, Integer> getInFlightCountByGroup() {
+        Map<String, Integer> counts = new ConcurrentHashMap<>();
+        for (InFlightMessage message : inFlightMap.values()) {
+            counts.merge(message.getGroupId(), 1, Integer::sum);
+        }
+        return counts;
+    }
+
     //注入死信队列
     private final DeadLetterQueue deadLetterQueue;
 

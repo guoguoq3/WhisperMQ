@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WhisperMQ 控制台</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2330;
+    --line: #2a3441;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #4493f8;
+    --ok: #3fb950;
+    --bad: #f85149;
+    --warn: #d29922;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 12px 20px; border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; background: rgba(13, 17, 23, .95); backdrop-filter: blur(6px); z-index: 10;
+  }
+  .brand { font-size: 16px; font-weight: 700; letter-spacing: .3px; }
+  .brand .sub { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+  .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+  .stat {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+    padding: 4px 10px; color: var(--muted); white-space: nowrap;
+  }
+  .stat b { color: var(--text); margin-left: 4px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; background: var(--muted); }
+  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.off { background: var(--bad); }
+
+  main {
+    display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px;
+    padding: 16px 20px 40px;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px 16px; min-width: 0;
+  }
+  .card h2 {
+    margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--text);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .hint { font-size: 11px; color: var(--muted); font-weight: 400; }
+  .span-4 { grid-column: span 4; }
+  .span-6 { grid-column: span 6; }
+  .span-7 { grid-column: span 7; }
+  .span-8 { grid-column: span 8; }
+  .span-12 { grid-column: span 12; }
+
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
+  input, select, textarea, button {
+    font: inherit; color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; outline: none;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 64px; font-family: ui-monospace, Consolas, monospace; }
+  form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  form .full { grid-column: span 2; }
+  form .check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); }
+  form button { grid-column: span 2; }
+  button {
+    cursor: pointer; background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+    transition: filter .15s;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--text); border-color: var(--line); }
+  button.danger { background: transparent; color: var(--bad); border-color: #5b2b2b; }
+  button.small { padding: 3px 8px; font-size: 11px; font-weight: 500; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row > input, .row > select { flex: 1; min-width: 120px; }
+
+  .result, .log {
+    margin: 10px 0 0; padding: 10px; max-height: 220px; overflow: auto;
+    background: #0b0f14; border: 1px solid var(--line); border-radius: 8px;
+    font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; color: #b9c4cf; white-space: pre-wrap;
+  }
+  .log { max-height: 320px; }
+
+  .session {
+    border: 1px solid var(--line); border-radius: 9px; padding: 10px; margin-bottom: 10px; background: var(--panel-2);
+  }
+  .session-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+  .session-head b { font-size: 12.5px; }
+  .pill {
+    font-size: 11px; padding: 2px 7px; border-radius: 999px;
+    background: #202a37; border: 1px solid var(--line); color: var(--muted); max-width: 260px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .pill.tags { color: var(--accent); border-color: #24405f; }
+  .session-head select { padding: 3px 6px; font-size: 11px; }
+  .counters { font-size: 11.5px; color: var(--muted); margin: 4px 0; }
+  .counters b { color: var(--text); }
+  .counters code { color: var(--accent); font-size: 11px; }
+  .mini { margin: 4px 0 0; padding: 0; list-style: none; font-size: 11px; color: var(--muted); }
+  .mini li { padding: 2px 0; border-top: 1px dashed #222b37; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mini li:first-child { border-top: none; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  td.mono, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+  .trunc { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { color: var(--muted); padding: 10px 0; font-size: 12px; }
+
+  .badge { font-size: 10.5px; padding: 1px 6px; border-radius: 999px; border: 1px solid; }
+  .badge.ok { color: var(--ok); border-color: #1d4429; background: #10231a; }
+  .badge.bad { color: var(--bad); border-color: #5b2b2b; background: #2a1416; }
+  .badge.run { color: var(--warn); border-color: #4d3a12; background: #241c0b; }
+
+  .steps { margin: 10px 0 0; padding: 0; list-style: none; }
+  .steps li { padding: 4px 0; border-bottom: 1px dashed #222b37; font-size: 12px; }
+  .steps li .icon { display: inline-block; width: 16px; }
+  .steps li.ok .icon { color: var(--ok); }
+  .steps li.bad .icon { color: var(--bad); }
+  .steps li .detail { color: var(--muted); font-size: 11.5px; margin-left: 18px; display: block; }
+
+  @media (max-width: 1200px) {
+    .span-4, .span-6, .span-7, .span-8 { grid-column: span 12; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">WhisperMQ <span class="sub">本地控制台 · 内嵌 Broker + 真实生产者/消费者</span></div>
+  <div class="stats" id="stats"></div>
+  <button class="ghost small" id="refreshBtn" title="立即刷新">刷新</button>
+</header>
+
+<main>
+  <section class="card span-4">
+    <h2>发送消息 <span class="hint">P_SEND_MSG</span></h2>
+    <form id="sendForm">
+      <label>Topic<input name="topic" value="DEMO_TOPIC" required></label>
+      <label>Tag<input name="tag" value="TAG1" placeholder="可空"></label>
+      <label class="full">Payload<textarea name="payload" rows="3">Hello WhisperMQ</textarea></label>
+      <label class="check"><input type="checkbox" name="enduring" checked> 持久化（enduring）</label>
+      <button type="submit">发送</button>
+    </form>
+    <pre class="result" id="sendResult">等待发送…</pre>
+  </section>
+
+  <section class="card span-8">
+    <h2>消费者 <span class="hint">每个都是真实 TCP 客户端：joinGroup → groupSubscribe → 监听器</span></h2>
+    <form id="consumerForm" class="row" style="display:flex;">
+      <input name="group" placeholder="消费组" value="DEMO_GROUP" required>
+      <input name="topic" placeholder="Topic" value="DEMO_TOPIC" required>
+      <input name="tags" placeholder="tags（逗号分隔，默认 *）" value="*">
+      <select name="mode" title="业务行为">
+        <option value="SUCCESS">正常消费</option>
+        <option value="FAIL">一直失败（ACK_FAIL）</option>
+        <option value="FAIL_ONCE">首次失败（看重投）</option>
+        <option value="REJECT_RETRY">拒绝并重试（死信链路）</option>
+        <option value="THROW">抛异常（业务线程隔离）</option>
+        <option value="SLOW">慢消费 500ms</option>
+      </select>
+      <button type="submit">创建消费者</button>
+    </form>
+    <div id="consumers"><div class="empty">还没有消费者</div></div>
+  </section>
+
+  <section class="card span-6">
+    <h2>消费者组 / 位点 <span class="hint">组内共享位点 · 在途 · 消费者级 Tag</span></h2>
+    <div id="groups"><div class="empty">还没有消费者组</div></div>
+  </section>
+
+  <section class="card span-6">
+    <h2>Broker 内存消息 <span class="hint">messageMap（已死信的消息会移除）</span></h2>
+    <div id="messages"><div class="empty">暂无消息</div></div>
+  </section>
+
+  <section class="card span-7">
+    <h2>死信队列 <span class="hint">可重放回原消费组</span></h2>
+    <div id="dlq"><div class="empty">暂无死信</div></div>
+  </section>
+
+  <section class="card span-5">
+    <h2>测试 <span class="hint">一键验证全部能力</span></h2>
+    <div class="row">
+      <button id="selfTestBtn">运行自检（4 个场景）</button>
+      <button id="mavenTestBtn" class="ghost">运行 Maven 测试</button>
+      <button id="cancelMavenBtn" class="ghost small" title="终止 Maven 进程">终止</button>
+    </div>
+    <div id="selfTest"></div>
+    <pre class="log" id="mavenLog">尚未运行 Maven 测试</pre>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+
+  async function api(path, options = {}) {
+    const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
+    const text = await res.text();
+    let data;
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+    if (!res.ok) throw new Error(data.error || (res.status + ' ' + res.statusText));
+    return data;
+  }
+
+  let online = false;
+  let consumersSig = '';
+  let groupsSig = '';
+  let messagesSig = '';
+  let dlqSig = '';
+
+  // ---------------------------------------------------------------- 顶部状态
+  function renderStats(broker, config) {
+    const stats = [
+      ['Broker', `${broker.host}:${broker.port}`, true],
+      ['消息', broker.messages],
+      ['在途', broker.inFlight],
+      ['组', broker.groups],
+      ['在线消费者', broker.onlineConsumers],
+      ['死信', broker.deadLetters],
+      ['ACK 超时', config.ackTimeoutMillis + 'ms'],
+      ['最大投递', config.maxDeliveryAttempts],
+    ];
+    $('#stats').innerHTML = stats.map(([name, value, dot]) =>
+      `<span class="stat">${dot ? '<span class="dot on"></span>' : ''}${esc(name)}<b>${esc(value)}</b></span>`
+    ).join('');
+  }
+
+  function renderOffline() {
+    $('#stats').innerHTML = '<span class="stat"><span class="dot off"></span>Broker 未连接</span>';
+  }
+
+  // ---------------------------------------------------------------- 消费者
+  function renderConsumers(list) {
+    const sig = JSON.stringify(list.map(c => [c.id, c.mode, c.received, c.success, c.failed, c.recent[0]?.messageId]));
+    if (sig === consumersSig) return;
+    consumersSig = sig;
+
+    if (!list.length) {
+      $('#consumers').innerHTML = '<div class="empty">还没有消费者</div>';
+      return;
+    }
+    const modes = ['SUCCESS', 'FAIL', 'FAIL_ONCE', 'REJECT_RETRY', 'THROW', 'SLOW'];
+    $('#consumers').innerHTML = list.map(c => `
+      <div class="session">
+        <div class="session-head">
+          <b>${esc(c.id)}</b>
+          <span class="pill">${esc(c.groupId)}</span>
+          <span class="pill">${esc(c.topic)}</span>
+          <span class="pill tags">${esc(c.tags.join(', '))}</span>
+          <select data-mode="${esc(c.id)}" title="业务行为">
+            ${modes.map(m => `<option value="${m}" ${m === c.mode ? 'selected' : ''}>${m}</option>`).join('')}
+          </select>
+          <button class="danger small" data-close="${esc(c.id)}">停止</button>
+        </div>
+        <div class="counters">
+          收到 <b>${c.received}</b> · 成功 <b>${c.success}</b> · 失败 <b>${c.failed}</b>
+          · 线程 <code>${esc(c.lastThread || '-')}</code>
+          ${c.lastError ? ' · <span style="color:var(--bad)">' + esc(c.lastError) + '</span>' : ''}
+        </div>
+        ${c.recent.length ? `<ul class="mini">${c.recent.slice(0, 3).map(m =>
+          `<li>${esc(m.topic)} / ${esc(m.tag || '-')} · ${esc(m.payload)}</li>`).join('')}</ul>` : ''}
+      </div>
+    `).join('');
+  }
+
+  // ---------------------------------------------------------------- 分组
+  function renderGroups(groups) {
+    const sig = JSON.stringify(groups);
+    if (sig === groupsSig) return;
+    groupsSig = sig;
+
+    if (!groups.length) {
+      $('#groups').innerHTML = '<div class="empty">还没有消费者组</div>';
+      return;
+    }
+    $('#groups').innerHTML = `<table>
+      <thead><tr><th>组</th><th>在线 / 在途</th><th>订阅</th><th>位点</th><th>消费者级 Tag</th></tr></thead>
+      <tbody>${groups.map(g => `
+        <tr>
+          <td class="mono">${esc(g.groupId)}</td>
+          <td>${g.onlineConsumers} / ${g.inFlight}</td>
+          <td class="mono">${esc(g.subscriptions.join(', ') || '-')}</td>
+          <td class="mono">${Object.entries(g.offsets).map(([t, o]) => `${esc(t)}=${esc(o)}`).join('<br>') || '-'}</td>
+          <td class="mono">${Object.entries(g.tags).flatMap(([t, cs]) =>
+            Object.entries(cs).map(([cid, tags]) => `${esc(t)}:${esc(cid.slice(-6))}→${esc([].concat(tags).join('|'))}`)
+          ).join('<br>') || '-'}</td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+  }
+
+  // ---------------------------------------------------------------- 消息 / 死信
+  function renderMessages(messages) {
+    const sig = JSON.stringify(messages.map(m => m.messageId));
+    if (sig === messagesSig) return;
+    messagesSig = sig;
+
+    if (!messages.length) {
+      $('#messages').innerHTML = '<div class="empty">暂无消息</div>';
+      return;
+    }
+    $('#messages').innerHTML = `<table>
+      <thead><tr><th>消息 ID</th><th>Topic</th><th>Tag</th><th>Payload</th></tr></thead>
+      <tbody>${messages.map(m => `
+        <tr>
+          <td class="mono">${esc(String(m.messageId).slice(-10))}</td>
+          <td class="mono">${esc(m.topic)}</td>
+          <td>${esc(m.tag || '-')}</td>
+          <td class="trunc" title="${esc(m.payload)}">${esc(m.payload)}</td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+  }
+
+  function renderDlq(deadLetters) {
+    const sig = JSON.stringify(deadLetters.map(d => d.id));
+    if (sig === dlqSig) return;
+    dlqSig = sig;
+
+    if (!deadLetters.length) {
+      $('#dlq').innerHTML = '<div class="empty">暂无死信</div>';
+      return;
+    }
+    $('#dlq').innerHTML = `<table>
+      <thead><tr><th>死信 ID</th><th>原因</th><th>原消息</th><th>Topic / Payload</th><th></th></tr></thead>
+      <tbody>${deadLetters.map(d => `
+        <tr>
+          <td class="mono">${esc(String(d.id).slice(-10))}</td>
+          <td><span class="badge bad">${esc(d.deadType || '-')}</span><br><span class="hint">重试 ${esc(d.retryCount)}</span></td>
+          <td class="mono">${esc(String(d.messageId || '').slice(-10))}<br><span class="hint">${esc(d.groupId || '')}</span></td>
+          <td class="trunc" title="${esc(d.payload)}">${esc(d.topic || '?')} · ${esc(d.payload)}</td>
+          <td><button class="small" data-replay="${esc(d.id)}">重放</button></td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+  }
+
+  // ---------------------------------------------------------------- 测试状态
+  function renderSelfTest(state) {
+    const status = state.status || 'IDLE';
+    const badge = status === 'RUNNING' ? 'run' : (status === 'PASSED' ? 'ok' : (status === 'FAILED' ? 'bad' : ''));
+    const steps = (state.steps || []).map(s => `
+      <li class="${s.ok ? 'ok' : 'bad'}">
+        <span class="icon">${s.ok ? '✓' : '✗'}</span>${esc(s.name)}
+        <span class="detail">${esc(s.detail)}</span>
+      </li>`).join('');
+    const logs = (state.logs || []).join('\n');
+    $('#selfTest').innerHTML = `
+      <div class="row" style="margin-top:10px;">
+        <span class="badge ${badge}">${esc(status)}</span>
+        <span class="hint">通过 ${state.passed ?? 0} · 失败 ${state.failed ?? 0}
+          ${state.durationMillis ? '· ' + state.durationMillis + 'ms' : ''}</span>
+      </div>
+      ${steps ? `<ul class="steps">${steps}</ul>` : ''}
+      ${logs ? `<pre class="log">${esc(logs)}</pre>` : ''}`;
+    $('#selfTestBtn').disabled = status === 'RUNNING';
+  }
+
+  function renderMavenTest(state) {
+    const status = state.status || 'IDLE';
+    const running = status === 'RUNNING';
+    $('#mavenTestBtn').disabled = running;
+    $('#cancelMavenBtn').disabled = !running;
+    const lines = state.lines || [];
+    const text = lines.slice(-260).join('\n');
+    const head = running
+      ? `运行中… ${state.command || ''}`
+      : (status === 'IDLE' ? '尚未运行 Maven 测试'
+        : `${status} · exit=${state.exitCode} · ${state.durationMillis}ms`);
+    const pre = $('#mavenLog');
+    const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+    pre.textContent = head + '\n' + text;
+    if (running && atBottom) pre.scrollTop = pre.scrollHeight;
+  }
+
+  // ---------------------------------------------------------------- 加载
+  async function loadOverview() {
+    try {
+      const data = await api('/api/overview');
+      online = true;
+      renderStats(data.broker, data.config);
+      renderGroups(data.groups);
+      renderConsumers(data.consumers);
+      renderMessages(data.recentMessages);
+      renderDlq(data.deadLetters);
+    } catch (e) {
+      if (online) { console.warn(e); }
+      online = false;
+      renderOffline();
+    }
+  }
+
+  async function loadTests() {
+    try {
+      renderSelfTest(await api('/api/test/self'));
+      renderMavenTest(await api('/api/test/maven'));
+    } catch (e) { /* 忽略轮询错误 */ }
+  }
+
+  async function refreshAll() {
+    await Promise.all([loadOverview(), loadTests()]);
+  }
+
+  // ---------------------------------------------------------------- 事件
+  $('#sendForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    const button = event.target.querySelector('button');
+    button.disabled = true;
+    try {
+      const result = await api('/api/messages', {
+        method: 'POST',
+        body: JSON.stringify({
+          topic: form.get('topic'),
+          tag: form.get('tag'),
+          payload: form.get('payload'),
+          enduring: form.get('enduring') === 'on'
+        })
+      });
+      $('#sendResult').textContent = JSON.stringify(result, null, 2);
+      await loadOverview();
+    } catch (e) {
+      $('#sendResult').textContent = '发送失败：' + e.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $('#consumerForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    const tags = String(form.get('tags') || '*').split(',').map(t => t.trim()).filter(Boolean);
+    const button = event.target.querySelector('button');
+    button.disabled = true;
+    try {
+      await api('/api/consumers', {
+        method: 'POST',
+        body: JSON.stringify({
+          group: form.get('group'),
+          topic: form.get('topic'),
+          tags,
+          mode: form.get('mode')
+        })
+      });
+      await loadOverview();
+    } catch (e) {
+      alert('创建消费者失败：' + e.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $('#consumers').addEventListener('click', async (event) => {
+    const id = event.target.dataset.close;
+    if (!id) return;
+    try {
+      await api('/api/consumers/' + encodeURIComponent(id), { method: 'DELETE' });
+      await loadOverview();
+    } catch (e) { alert('停止失败：' + e.message); }
+  });
+
+  $('#consumers').addEventListener('change', async (event) => {
+    const id = event.target.dataset.mode;
+    if (!id) return;
+    try {
+      await api('/api/consumers/' + encodeURIComponent(id) + '/mode', {
+        method: 'PATCH',
+        body: JSON.stringify({ mode: event.target.value })
+      });
+      consumersSig = '';
+      await loadOverview();
+    } catch (e) { alert('切换模式失败：' + e.message); }
+  });
+
+  $('#dlq').addEventListener('click', async (event) => {
+    const id = event.target.dataset.replay;
+    if (!id) return;
+    event.target.disabled = true;
+    try {
+      const result = await api('/api/deadletters/' + encodeURIComponent(id) + '/replay', { method: 'POST' });
+      if (!result.ok) alert('重放失败：' + (result.error || 'unknown'));
+      dlqSig = '';
+      await loadOverview();
+    } catch (e) {
+      alert('重放失败：' + e.message);
+    } finally {
+      event.target.disabled = false;
+    }
+  });
+
+  $('#selfTestBtn').addEventListener('click', async () => {
+    try {
+      await api('/api/test/self', { method: 'POST' });
+      await loadTests();
+    } catch (e) { alert('启动自检失败：' + e.message); }
+  });
+
+  $('#mavenTestBtn').addEventListener('click', async () => {
+    try {
+      await api('/api/test/maven', { method: 'POST' });
+      await loadTests();
+    } catch (e) { alert('启动 Maven 测试失败：' + e.message); }
+  });
+
+  $('#cancelMavenBtn').addEventListener('click', async () => {
+    try {
+      await api('/api/test/maven/cancel', { method: 'POST' });
+      await loadTests();
+    } catch (e) { alert('终止失败：' + e.message); }
+  });
+
+  $('#refreshBtn').addEventListener('click', refreshAll);
+
+  // 每 2 秒轮询；测试运行中每秒刷新一次日志
+  let tick = 0;
+  refreshAll();
+  setInterval(() => {
+    tick++;
+    loadOverview();
+    loadTests();
+  }, 2000);
+})();
+</script>
+</body>
+</html>

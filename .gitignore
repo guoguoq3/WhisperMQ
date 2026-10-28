@@ -41,4 +41,5 @@ build/
 ### WhisperMQ runtime data (generated on startup) ###
 WhisperMQ-data/
 WhisperMQ-offset/
+WhisperMQ-console-data/
 .dsh-acl-recovery/

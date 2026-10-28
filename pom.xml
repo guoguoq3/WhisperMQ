@@ -9,11 +9,12 @@
     <version>1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
     <modules>
+        <module>WhisperMQ-common</module>
         <module>WhisperMQ-broker</module>
         <module>WhisperMQ-producer</module>
         <module>WhisperMQ-consumer</module>
+        <module>WhisperMQ-console</module>
         <module>WhisperMQ-test</module>
-        <module>WhisperMQ-common</module>
     </modules>
     <parent>
         <groupId>org.springframework.boot</groupId>
@@ -73,13 +74,20 @@
         </dependency>
     </dependencies>
 
-    <!--    SpringBoot应用打包插件-->
+    <!--
+      Spring Boot 打包插件放在 pluginManagement 里：
+      只有“可执行应用”模块（WhisperMQ-console）显式声明它才会 repackage 成可执行 jar；
+      common/broker/producer/consumer 是库，保持普通 jar（否则 common 没有 main class 会构建失败，
+      而且 fat jar 也无法被其他模块当作依赖使用）。
+    -->
     <build>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
-        </plugins>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                </plugin>
+            </plugins>
+        </pluginManagement>
     </build>
 </project>
