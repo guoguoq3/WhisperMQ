@@ -8,6 +8,7 @@ import org.guoguo.common.util.SnowflakeIdGeneratorUtil;
 import org.guoguo.consumer.service.IMessageListener;
 import org.guoguo.consumer.service.impl.MqConsumer;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -20,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @SpringBootTest(classes = org.guoguo.consumer.ConsumerApplication.class)
 @TestPropertySource(locations = "classpath:application.properties")
+@Disabled("历史联网脚本：需要外部 Broker，已由 SmokeIT 取代")
 public class ConsumerGroupTest {
 
     @Autowired

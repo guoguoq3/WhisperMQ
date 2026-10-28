@@ -15,6 +15,8 @@ public class ConsumerAckReqDTO extends FunctionEntity {
     private String consumerId;
     /** 确认状态（SUCCESS=处理成功，FAIL=处理失败，后续可扩展重试） */
     private String ackStatus = "SUCCESS";
-    //消费者分组
+    /** 消费者分组 */
     private String groupId;
+    /** 分区号（P1 新增；旧客户端不传时按 0 处理） */
+    private Integer partition = 0;
 }

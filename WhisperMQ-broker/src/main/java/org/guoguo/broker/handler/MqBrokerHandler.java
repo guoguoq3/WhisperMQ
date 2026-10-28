@@ -60,6 +60,15 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
             sendErrorResponse(ctx, null, "消息格式错误");
             return;
         }
+        // P1：协议版本校验。旧客户端不传时按 1 处理；高于服务端支持版本直接拒绝。
+        Integer protocolVersion = rpcDto.getVersion() == null ? 1 : rpcDto.getVersion();
+        if (protocolVersion > RpcMessageDTO.PROTOCOL_VERSION) {
+            log.warn("WhisperMQ Broker 收到不支持的协议版本：{}（支持 <= {}）",
+                    protocolVersion, RpcMessageDTO.PROTOCOL_VERSION);
+            sendErrorResponse(ctx, null, "不支持的协议版本：" + protocolVersion
+                    + "，服务端支持 <= " + RpcMessageDTO.PROTOCOL_VERSION);
+            return;
+        }
         String methodType = rpcDto.getMethodType();
         if (methodType == null) {
             log.error("WhisperMQ Broker 方法类型为null: {}", rpcDto);

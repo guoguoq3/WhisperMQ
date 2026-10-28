@@ -105,6 +105,8 @@ public class MqConsumerManager extends MqConsumer {
         if (groupId.equals(currentGroupId)) {
             this.currentGroupId = null;
             subscriptionMap.clear();
+            // 离开组后不再接收该组的推送，监听器一并清理（重新入组后需重新订阅）
+            topicListenerMap.clear();
         }
         log.info("WhisperMQ 消费者离开组{}", groupId);
     }
@@ -201,12 +203,14 @@ public class MqConsumerManager extends MqConsumer {
 
         boolean success = handlePushMessage(messageId, topic, message);
         if (success) {
-            sendAck(messageId, ACK_SUCCESS);
+            // 成功消费后清理死信重试计数，避免按消息泄漏
+            deadLetterMap.remove(messageId);
+            sendAck(messageId, ACK_SUCCESS, message.getPartition());
         } else if (wasRejected(messageId)) {
             // 监听器已经通过 reject() 走死信重试链路，不需要再发 ACK_FAIL 造成双重重投
             log.info("WhisperMQ 消费者已通过 reject 处理消息{}，跳过 ACK_FAIL", messageId);
         } else {
-            sendAck(messageId, ACK_FAIL);
+            sendAck(messageId, ACK_FAIL, message.getPartition());
             log.warn("WhisperMQ 消费者处理消息{}失败，发送FAIL ACK，等待 Broker 重投", messageId);
         }
     }
@@ -234,8 +238,13 @@ public class MqConsumerManager extends MqConsumer {
         return rejectedMessageIds.contains(messageId);
     }
 
-    /** 发送ACK给Broker（业务线程调用） */
+    /** 发送ACK给Broker（兼容旧调用：分区 0） */
     public void sendAck(String messageId, String ackStatus) {
+        sendAck(messageId, ackStatus, 0);
+    }
+
+    /** 发送ACK给Broker（携带分区，Broker 据此推进对应分区的位点） */
+    public void sendAck(String messageId, String ackStatus, int partition) {
         if (currentGroupId == null) {
             log.error("WhisperMQ 消费者未加入任何组，无法发送ACK：消息{}", messageId);
             return;
@@ -249,9 +258,11 @@ public class MqConsumerManager extends MqConsumer {
         ackReq.setMessageId(messageId);
         ackReq.setGroupId(currentGroupId);
         ackReq.setAckStatus(ackStatus);
+        ackReq.setPartition(Math.max(0, partition));
 
         sendFrame(buildRpc(MethodType.C_ACK_MSG, ackReq));
-        log.info("WhisperMQ 消费者向组{}发送ACK：消息{}，状态{}", currentGroupId, messageId, ackStatus);
+        log.info("WhisperMQ 消费者向组{}发送ACK：消息{}（分区{}），状态{}",
+                currentGroupId, messageId, partition, ackStatus);
     }
 
     // ------------------------------------------------------------------ 死信

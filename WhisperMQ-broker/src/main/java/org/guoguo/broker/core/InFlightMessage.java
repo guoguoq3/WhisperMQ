@@ -17,6 +17,8 @@ public class InFlightMessage {
     private final String groupId;
     /** 主题 */
     private final String topic;
+    /** 分区（P1：位点按分区推进；旧消息为 0） */
+    private final int partition;
     /** 消息 ID（雪花号） */
     private final String messageId;
     /** 消息体，重投时直接复用，避免 messageMap 被清理后无法重投 */
@@ -32,10 +34,11 @@ public class InFlightMessage {
     @Setter
     private volatile int attempts;
 
-    public InFlightMessage(String groupId, String topic, String messageId, MqMessage message,
+    public InFlightMessage(String groupId, String topic, int partition, String messageId, MqMessage message,
                            String consumerId, int attempts, long lastPushTime) {
         this.groupId = groupId;
         this.topic = topic;
+        this.partition = partition;
         this.messageId = messageId;
         this.message = message;
         this.consumerId = consumerId;

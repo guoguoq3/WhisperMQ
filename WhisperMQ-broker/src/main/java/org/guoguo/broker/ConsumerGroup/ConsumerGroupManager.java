@@ -139,24 +139,30 @@ public class ConsumerGroupManager {
         // 记录组级订阅配置 + 当前消费者自己的 Tag
         consumerGroup.addSubscribe(subscribeReqDTO, ctx);
 
-        String lastOffset = consumerGroup.getTopicOffsetMap().get(topic);
-        if (lastOffset == null) {
+        boolean hasOffset = consumerGroup.hasOffset(topic);
+        if (!hasOffset) {
             if (!config.isNewGroupStartFromEarliest()) {
                 log.info("WhisperMQ Broker 组{}订阅主题{}：无历史位点，从最新消息开始", groupId, topic);
                 return null;
             }
             // 新组默认按最早消息回溯，避免"订阅生效前发布的消息被永久丢弃"
-            lastOffset = "0";
             log.info("WhisperMQ Broker 组{}订阅主题{}：无历史位点，从最早消息开始回溯", groupId, topic);
         }
 
-        // 回溯：主题匹配 + 该消费者的 Tag 匹配 + ID 大于位点，按消息ID升序
-        final String startOffset = lastOffset;
+        // 回溯：主题匹配 + 该消费者的 Tag 匹配 + 分区位点比较，按消息ID升序
+        final boolean replayAll = !hasOffset;
         final List<String> subscribeTags = tags;
         List<Map.Entry<String, MqMessage>> backlog = brokerManager.getMessageMap().entrySet().stream()
                 .filter(entry -> topic.equals(entry.getValue().getTopic()))
                 .filter(entry -> matchesTag(subscribeTags, entry.getValue().getTag()))
-                .filter(entry -> compareMessageId(entry.getKey(), startOffset) > 0)
+                .filter(entry -> {
+                    if (replayAll) {
+                        return true;
+                    }
+                    int partition = entry.getValue().getPartition();
+                    String partitionOffset = consumerGroup.getOffset(topic, partition);
+                    return partitionOffset == null || compareMessageId(entry.getKey(), partitionOffset) > 0;
+                })
                 .sorted(Comparator.comparingLong(entry -> parseMessageId(entry.getKey())))
                 .toList();
 
@@ -283,8 +289,17 @@ public class ConsumerGroupManager {
         return result;
     }
 
-    // 更新消费者组的消费位点
+    // 更新消费者组的消费位点（兼容旧调用：分区 0）
     public void updateGroupOffset(String groupId, String topic, String messageId) {
+        updateGroupOffset(groupId, topic, 0, messageId);
+    }
+
+    /**
+     * 更新消费者组在某个分区上的消费位点。
+     * <p>P1：位点按 (group, topic, partition) 维护，避免不同分区的 ACK 互相覆盖；
+     * 分区 0 同时写入旧视图，兼容旧代码与旧数据。</p>
+     */
+    public void updateGroupOffset(String groupId, String topic, int partition, String messageId) {
         //检查参数是否为null
         if (groupId == null) {
             log.warn("WhisperMQ Broker groupId is null, 无法更新位点");
@@ -304,13 +319,13 @@ public class ConsumerGroupManager {
             return;
         }
         // 仅更新为更大的消息ID（确保位点递增，避免回退）
-        String currentOffset = consumerGroup.getTopicOffsetMap().get(topic);
+        String currentOffset = consumerGroup.getOffset(topic, partition);
         if (currentOffset == null || compareMessageId(messageId, currentOffset) > 0) {
-            consumerGroup.getTopicOffsetMap().put(topic, messageId);
+            consumerGroup.putOffset(topic, partition, messageId);
             // 位点持久化：内部是单线程有序队列（旧实现用 commonPool 异步写，顺序不可控）
-            offsetPersistUtil.writeMessage(groupId, topic, messageId);
-            log.info("WhisperMQ Broker 更新组{}的主题{}消费位点至消息{}",
-                    groupId, topic, messageId);
+            offsetPersistUtil.writeMessage(groupId, topic, partition, messageId);
+            log.info("WhisperMQ Broker 更新组{}的主题{}分区{}消费位点至消息{}",
+                    groupId, topic, partition, messageId);
         }
     }
 

@@ -85,17 +85,33 @@ mvn -o -pl WhisperMQ-consumer -am test -Dtest=SmokeIT -DfailIfNoTests=false
 
 - `whisper-mq.*`：Broker / 客户端 / 可靠性参数，见 `MqConfigProperties`
   （`ack-timeout-millis`、`max-delivery-attempts`、`max-dead-letter-retry-count`、
-  `heartbeat-interval-millis`、`reconnect-*-millis`、`subscribe-timeout-millis` 等）。
+  `heartbeat-interval-millis`、`reconnect-*-millis`、`subscribe-timeout-millis`、
+  `default-partitions` 等）。
 - `whisper-console.*`：控制台参数，见 `WhisperMQ-console/src/main/resources/application.properties`
   （`maven-command`、`repo-root`、`max-recent-messages`）。
 - 控制台默认数据目录为 `./WhisperMQ-console-data`，与仓库根目录的历史演示数据隔离。
 
+## P1 升级路线
+
+详见 [`docs/p1-roadmap.md`](docs/p1-roadmap.md)。
+
+- **Stage A（已完成）**：协议版本号、分区/位点数据模型（默认 1 分区，行为不变）、
+  清理与历史测试迁移、消费端指标暴露；
+- **Stage B（下一步）**：分区投递与再均衡（`(topic, partition) → consumer` 分配、
+  位点按分区推进、Tag × 分区规则）；
+- **Stage C**：Segment 存储、索引、TTL/容量保留、按需加载；
+- **Stage D**：背压（暂停投递）、消费端去重、鉴权/TLS、管理指标；
+- **Stage E**：多 Broker 副本、选主与故障转移。
+
 ## 已知限制 / 后续计划
 
-- 尚无分区（partition）与多 Broker 副本、选主；
-- 位点是 `group × topic` 单游标，乱序 ACK 仍可能跳过中间消息；
-- 消息全量驻留内存，缺保留策略与分段索引；
-- 无鉴权 / TLS；
-- 业务线程池满时采用“不 ACK + Broker 超时重投”，过载时可能进入死信。
+- 分区数据模型已落地，但**分区投递与再均衡**在 Stage B 完成前请保持
+  `whisper-mq.default-partitions=1`（默认值）；
+- 多 Broker 副本、选主尚未实现；
+- 位点已按分区维护，跨分区不再互相覆盖；同一分区内仍按消息 ID 水位推进；
+- 消息全量驻留内存，缺保留策略与分段索引（Stage C）；
+- 无鉴权 / TLS（Stage D）；
+- 业务线程池满时仍采用“不 ACK + Broker 超时重投”，Stage D 改为暂停投递。
 
-详见 `docs/` 下的架构图。
+详见 `docs/` 下的架构图与 P1 路线图。
+

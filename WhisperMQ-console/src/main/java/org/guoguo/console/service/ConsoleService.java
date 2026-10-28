@@ -235,7 +235,7 @@ public class ConsoleService {
             item.put("onlineConsumers", group.getOnlineConsumers().size());
             item.put("consumerIds", new ArrayList<>(group.getOnlineConsumers().keySet()));
             item.put("subscriptions", new ArrayList<>(group.getSubscribeMap().keySet()));
-            item.put("offsets", new LinkedHashMap<>(group.getTopicOffsetMap()));
+            item.put("offsets", new LinkedHashMap<>(group.offsetView()));
             item.put("tags", new LinkedHashMap<>(group.getTopicConsumerTags()));
             item.put("inFlight", inFlightByGroup.getOrDefault(group.getGroupId(), 0));
             list.add(item);

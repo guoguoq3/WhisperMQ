@@ -148,6 +148,11 @@ public class ConsumerSession {
         snap.put("lastThread", lastThread);
         snap.put("lastError", lastError);
         snap.put("alive", consumer.getDispatcher() != null);
+        snap.put("dispatcher", Map.of(
+                "submitted", consumer.getDispatcher().getSubmitted(),
+                "completed", consumer.getDispatcher().getCompleted(),
+                "failed", consumer.getDispatcher().getFailed(),
+                "rejected", consumer.getDispatcher().getRejected()));
         snap.put("recent", new ArrayList<>(recent));
         return snap;
     }

@@ -226,33 +226,50 @@ public class OffsetPersistUtil {
     }
 
     /**
-     * 写入位点：提交到单线程队列，按提交顺序落盘。
+     * 写入位点（兼容旧调用）：默认分区 0。
      */
     public void writeMessage(String groupId, String topic, String messageId) {
+        writeMessage(groupId, topic, 0, messageId);
+    }
+
+    /**
+     * 写入某个分区的位点：提交到单线程队列，按提交顺序落盘。
+     *
+     * <p>存储键：分区 0 使用旧格式 {@code group:topic}，分区 &gt;0 使用
+     * {@code group:topic#partition}，两种格式可以共存，旧版本恢复时忽略新格式。</p>
+     */
+    public void writeMessage(String groupId, String topic, int partition, String messageId) {
         if (groupId == null || topic == null || messageId == null) {
             log.warn("位点写入参数不完整：groupId={}，topic={}，messageId={}", groupId, topic, messageId);
             return;
         }
+        final int safePartition = Math.max(0, partition);
         try {
             writeExecutor.execute(() -> {
                 try {
-                    doWriteMessage(groupId, topic, messageId);
+                    doWriteMessage(groupId, topic, safePartition, messageId);
                 } catch (Exception e) {
-                    log.error("组[{}]位点写入失败（{}）", groupId, topic, e);
+                    log.error("组[{}]位点写入失败（{}#{}）", groupId, topic, safePartition, e);
                 }
             });
         } catch (RejectedExecutionException e) {
             // 关闭过程中拒绝新任务：此时内存位点已更新，文件位点停留在最后一次成功写入
-            log.warn("位点写入任务被拒绝（写入线程已关闭）：{}:{} -> {}", groupId, topic, messageId);
+            log.warn("位点写入任务被拒绝（写入线程已关闭）：{}:{}#{} -> {}",
+                    groupId, topic, safePartition, messageId);
         }
     }
 
-    private void doWriteMessage(String groupId, String topic, String messageId) throws IOException {
+    /** 位点存储键：分区 0 保持旧格式，分区 >0 追加 #partition */
+    private String offsetKey(String groupId, String topic, int partition) {
+        return partition > 0 ? groupId + ":" + topic + "#" + partition : groupId + ":" + topic;
+    }
+
+    private void doWriteMessage(String groupId, String topic, int partition, String messageId) throws IOException {
         if (!groupWriterMap.containsKey(groupId)) {
             log.error("消费者组[{}]未初始化，无法写入位点", groupId);
             return;
         }
-        String uniqueKey = groupId + ":" + topic;
+        String uniqueKey = offsetKey(groupId, topic, partition);
         Object groupLock = groupLocks.computeIfAbsent(groupId, k -> new Object());
         synchronized (groupLock) {
             // 1. 单调性校验：位点只能前进
@@ -309,7 +326,6 @@ public class OffsetPersistUtil {
 
     public void recoverOffsetByGroupAndTopic(ConsumerGroup consumerGroup, String topic) {
         String groupId = consumerGroup.getGroupId();
-        String targetUniqueKey = groupId + ":" + topic;
         File groupFile = groupFileMap.get(groupId);
 
         if (groupFile == null || !groupFile.exists()) {
@@ -317,7 +333,8 @@ public class OffsetPersistUtil {
             return;
         }
 
-        String latestOffset = null;
+        Map<Integer, String> latestByPartition = new HashMap<>();
+        String prefix = groupId + ":" + topic;
         try (BufferedReader reader = Files.newBufferedReader(groupFile.toPath())) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -325,19 +342,38 @@ public class OffsetPersistUtil {
                 if (line.isEmpty()) continue;
 
                 Matcher matcher = OFFSET_PATTERN.matcher(line);
-                if (matcher.matches() && matcher.group("uniqueKey").equals(targetUniqueKey)) {
-                    latestOffset = matcher.group("offset");
+                if (!matcher.matches()) continue;
+
+                String uniqueKey = matcher.group("uniqueKey");
+                if (!uniqueKey.startsWith(prefix)) continue;
+
+                String suffix = uniqueKey.substring(prefix.length());
+                int partition = 0;
+                if (!suffix.isEmpty()) {
+                    if (!suffix.startsWith("#")) {
+                        continue; // 同前缀的其它 topic（如 T 与 T2）
+                    }
+                    try {
+                        partition = Integer.parseInt(suffix.substring(1));
+                    } catch (NumberFormatException e) {
+                        log.warn("组[{}]位点行分区号非法，已跳过：{}", groupId, line);
+                        continue;
+                    }
                 }
+                latestByPartition.put(partition, matcher.group("offset"));
             }
         } catch (Exception e) {
             log.error("读取组[{}]文件失败", groupId, e);
             throw new RuntimeException(e);
         }
 
-        if (latestOffset != null) {
-            consumerGroup.getTopicOffsetMap().put(topic, latestOffset);
-            persistedUniqueKeyCache.put(targetUniqueKey, latestOffset);
-            log.info("组[{}]恢复位点成功（{}:{}）", groupId, topic, latestOffset);
+        if (!latestByPartition.isEmpty()) {
+            latestByPartition.forEach((partition, offset) -> {
+                consumerGroup.putOffset(topic, partition, offset);
+                persistedUniqueKeyCache.put(offsetKey(groupId, topic, partition), offset);
+            });
+            log.info("组[{}]恢复位点成功（{}，共{}个分区）：{}",
+                    groupId, topic, latestByPartition.size(), latestByPartition);
         }
     }
 

@@ -8,6 +8,7 @@ import org.guoguo.common.pojo.DTO.SubscribeReqDTO;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -27,14 +28,64 @@ public class ConsumerGroup {
     /** 组内订阅关系：key=主题，value=该主题最近一次订阅配置（用于组级存在性与默认 tag） */
     private Map<String, SubscribeReqDTO> subscribeMap = new ConcurrentHashMap<>();
 
-    /** 组内消费位点：key=主题，value=该主题的最新消费消息ID（同组共享） */
+    /** 组内消费位点：key=主题，value=该主题的最新消费消息ID（同组共享；分区 0 的兼容视图） */
     private Map<String, String> topicOffsetMap = new ConcurrentHashMap<>();
+
+    /**
+     * 按分区保存的消费位点：topic → (partition → 最新消息 ID)。
+     * P1 新增；分区 0 同时写入 {@link #topicOffsetMap}，保证旧代码/旧数据可用。
+     */
+    private Map<String, Map<Integer, String>> topicPartitionOffsetMap = new ConcurrentHashMap<>();
 
     /** 组内在线消费者通道：key=消费者ID（通道ID），value=Netty通道 */
     private Map<String, io.netty.channel.Channel> onlineConsumers = new ConcurrentHashMap<>();
 
     /** 主题 → 消费者 → 该消费者订阅的 Tag 列表（消费者级，允许同一组内不同消费者订阅不同 Tag） */
     private Map<String, Map<String, List<String>>> topicConsumerTags = new ConcurrentHashMap<>();
+
+    /**
+     * 读取某个分区的位点：优先查分区表，分区 0 回退到旧的 topicOffsetMap。
+     */
+    public String getOffset(String topic, int partition) {
+        Map<Integer, String> byPartition = topicPartitionOffsetMap.get(topic);
+        String value = byPartition == null ? null : byPartition.get(partition);
+        if (value != null) {
+            return value;
+        }
+        return partition == 0 ? topicOffsetMap.get(topic) : null;
+    }
+
+    /**
+     * 更新某个分区的位点；分区 0 同步维护旧视图。
+     */
+    public void putOffset(String topic, int partition, String messageId) {
+        if (topic == null || messageId == null) {
+            return;
+        }
+        topicPartitionOffsetMap.computeIfAbsent(topic, k -> new ConcurrentHashMap<>()).put(partition, messageId);
+        if (partition == 0) {
+            topicOffsetMap.put(topic, messageId);
+        }
+    }
+
+    /** 该主题是否已有任何位点（任意分区） */
+    public boolean hasOffset(String topic) {
+        if (topicOffsetMap.containsKey(topic)) {
+            return true;
+        }
+        Map<Integer, String> byPartition = topicPartitionOffsetMap.get(topic);
+        return byPartition != null && !byPartition.isEmpty();
+    }
+
+    /** 位点快照，供控制台展示：topic（分区 0）或 topic#partition → offset */
+    public Map<String, String> offsetView() {
+        Map<String, String> view = new LinkedHashMap<>();
+        topicPartitionOffsetMap.forEach((topic, byPartition) ->
+                byPartition.forEach((partition, offset) ->
+                        view.put(partition == 0 ? topic : topic + "#" + partition, offset)));
+        topicOffsetMap.forEach(view::putIfAbsent);
+        return view;
+    }
 
     /**
      * 记录某个消费者对某个主题的 Tag 订阅。
@@ -105,6 +156,7 @@ public class ConsumerGroup {
     public void removeSubscribe(String topic) {
         subscribeMap.remove(topic);
         topicOffsetMap.remove(topic); // 移除订阅时清空对应位点
+        topicPartitionOffsetMap.remove(topic);
         topicConsumerTags.remove(topic);
     }
 

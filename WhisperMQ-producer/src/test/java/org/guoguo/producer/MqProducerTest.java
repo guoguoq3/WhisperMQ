@@ -7,6 +7,7 @@ import org.guoguo.common.pojo.Entity.MqMessageEnduring;
 import org.guoguo.producer.pojo.Result;
 
 import org.guoguo.producer.service.IMqProducer;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -20,6 +21,7 @@ import java.util.Arrays;
 @Slf4j
 @SpringBootTest(classes = org.guoguo.producer.ProducerApplication.class) // 指定生产者启动类
 @TestPropertySource(locations = "classpath:application.properties") // 加载配置
+@Disabled("历史联网脚本：需要外部 Broker，已由 SmokeIT 取代")
 public class MqProducerTest {
 
     @Autowired

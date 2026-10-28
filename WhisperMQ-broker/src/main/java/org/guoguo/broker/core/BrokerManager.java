@@ -59,6 +59,8 @@ public class BrokerManager {
     private final MqConfigProperties config;
     private final FilePersistUtil filePersistUtil;
     private final DeadLetterPersistUtil deadLetterPersistUtil;
+    /** 分区元数据（P1：默认 1 分区时行为不变） */
+    private final TopicMetadata topicMetadata;
 
     /** 当前在途（已投递未确认）消息数，供控制台观测 */
     public int getInFlightCount() {
@@ -92,13 +94,15 @@ public class BrokerManager {
             @Lazy ConsumerGroupManager consumerGroupManager,
             MqConfigProperties config,
             DeadLetterQueue deadLetterQueue,
-            DeadLetterPersistUtil deadLetterPersistUtil
+            DeadLetterPersistUtil deadLetterPersistUtil,
+            TopicMetadata topicMetadata
     ) {
         this.filePersistUtil = filePersistUtil;
         this.groupManager = consumerGroupManager;
         this.config = config;
         this.deadLetterQueue = deadLetterQueue;
         this.deadLetterPersistUtil = deadLetterPersistUtil;
+        this.topicMetadata = topicMetadata;
         log.info("WhisperMQ Broker 死信配置重试次数：{}", config.getMaxDeadLetterRetryCount());
     }
 
@@ -125,11 +129,16 @@ public class BrokerManager {
      */
     public void handlerMessage(MqMessageEnduring mqMessage, String messageId, Boolean isRetry) {
         boolean retry = Boolean.TRUE.equals(isRetry);
+        // P1：确定分区（默认 1 个分区时恒为 0，与升级前行为一致）
+        int partition = topicMetadata.partitionOf(mqMessage.getTopic(), mqMessage.getBizKey(),
+                messageId, mqMessage.getPartition());
+        mqMessage.setPartition(partition);
+
         messageMap.put(messageId, mqMessage);
         //默认为true，即进行持久化
         if (mqMessage.isEnduring() && !retry) {
             //持久化
-            log.info("WhisperMQ Broker 存储消息：ID={}，主题={}", messageId, mqMessage.getTopic());
+            log.info("WhisperMQ Broker 存储消息：ID={}，主题={}，分区={}", messageId, mqMessage.getTopic(), partition);
             //核心持久化时机是在 Broker 接收到生产者的消息后、尚未发送给消费者之前完成存储
             filePersistUtil.writeMessage(messageId, mqMessage);
         }
@@ -159,6 +168,7 @@ public class BrokerManager {
     public void pushMessageToGroup(ConsumerGroup group, String messageId, MqMessage message, Boolean isRetry) {
         String groupId = group.getGroupId();
         String topic = message.getTopic();
+        int partition = message.getPartition();
         String messageTag = message.getTag();
         boolean retry = Boolean.TRUE.equals(isRetry);
         String inFlightKey = inFlightKey(groupId, messageId);
@@ -169,10 +179,10 @@ public class BrokerManager {
                 log.info("WhisperMQ Broker 消息{}已在组{}的在途表中，跳过重复推送", messageId, groupId);
                 return;
             }
-            // 检查组消费位点：只推送位点之后的消息
-            String groupOffset = group.getTopicOffsetMap().get(topic);
+            // 检查组消费位点（按分区）：只推送该分区位点之后的消息
+            String groupOffset = group.getOffset(topic, partition);
             if (groupOffset != null && compareMessageId(messageId, groupOffset) <= 0) {
-                log.info("WhisperMQ Broker 消息{}已在组{}的消费位点之前，跳过推送", messageId, groupId);
+                log.info("WhisperMQ Broker 消息{}已在组{}分区{}的消费位点之前，跳过推送", messageId, groupId, partition);
                 return;
             }
         }
@@ -216,10 +226,10 @@ public class BrokerManager {
             targetChannel.writeAndFlush(JSON.toJSONString(rpcDto) + "\n"); // 带分隔符
 
             inFlightMap.put(inFlightKey(group.getGroupId(), messageId),
-                    new InFlightMessage(group.getGroupId(), message.getTopic(), messageId, message,
-                            targetConsumerId, attempts, System.currentTimeMillis()));
-            log.info("WhisperMQ Broker 向组{}的消费者{}推送消息{}（第{}次投递）",
-                    group.getGroupId(), targetConsumerId, messageId, attempts);
+                    new InFlightMessage(group.getGroupId(), message.getTopic(), message.getPartition(),
+                            messageId, message, targetConsumerId, attempts, System.currentTimeMillis()));
+            log.info("WhisperMQ Broker 向组{}的消费者{}推送消息{}（分区{}，第{}次投递）",
+                    group.getGroupId(), targetConsumerId, messageId, message.getPartition(), attempts);
             return true;
         } catch (Exception e) {
             log.error("WhisperMQ Broker 推送消息{}给组{}的消费者{}失败",
@@ -318,8 +328,8 @@ public class BrokerManager {
         if (nextAttempt > Math.max(1, config.getMaxDeliveryAttempts())) {
             log.warn("WhisperMQ Broker 消息{}在组{}中投递{}次仍无 ACK，转入死信",
                     record.getMessageId(), record.getGroupId(), record.getAttempts());
-            moveToDeadLetter(record.getGroupId(), record.getTopic(), record.getMessageId(),
-                    record.getMessage(), DeadType.CONSUME_TIMEOUT, record.getAttempts());
+            moveToDeadLetter(record.getGroupId(), record.getTopic(), record.getPartition(),
+                    record.getMessageId(), record.getMessage(), DeadType.CONSUME_TIMEOUT, record.getAttempts());
             return;
         }
         String targetConsumerId = pickConsumer(group, record.getTopic(),
@@ -383,8 +393,11 @@ public class BrokerManager {
             return;
         }
         String topic = record != null ? record.getTopic() : message.getTopic();
-        groupManager.updateGroupOffset(groupId, topic, messageId);
-        log.info("WhisperMQ Broker 收到消费者{}的ACK：消息{}，状态{}", consumerId, messageId, ackStatus);
+        int partition = ackReq.getPartition() != null ? ackReq.getPartition()
+                : (record != null ? record.getPartition() : message.getPartition());
+        groupManager.updateGroupOffset(groupId, topic, partition, messageId);
+        log.info("WhisperMQ Broker 收到消费者{}的ACK：消息{}（分区{}），状态{}",
+                consumerId, messageId, partition, ackStatus);
     }
 
     /**
@@ -432,7 +445,7 @@ public class BrokerManager {
                 return;
             }
             inFlightMap.remove(inFlightKey(groupId, originMessageId));
-            moveToDeadLetter(groupId, mqMessage.getTopic(), originMessageId, mqMessage,
+            moveToDeadLetter(groupId, mqMessage.getTopic(), mqMessage.getPartition(), originMessageId, mqMessage,
                     deadLetterDTO.getDeadType(), deadRetryCount);
             return;
         }
@@ -519,7 +532,7 @@ public class BrokerManager {
     /**
      * 消息进入死信终态：标记持久化状态、入内存队列、落盘、推进组位点。
      */
-    private void moveToDeadLetter(String groupId, String topic, String messageId, MqMessage message,
+    private void moveToDeadLetter(String groupId, String topic, int partition, String messageId, MqMessage message,
                                   DeadType deadType, Integer deadRetryCount) {
         DeadLetterDTO deadLetter = new DeadLetterDTO();
         deadLetter.setMessageId(messageId);
@@ -547,7 +560,7 @@ public class BrokerManager {
         inFlightMap.remove(inFlightKey(groupId, messageId));
         // 该消息已是终态：推进产生它的组位点，避免重新订阅时被这条消息反复回溯
         if (groupId != null && topic != null) {
-            groupManager.updateGroupOffset(groupId, topic, messageId);
+            groupManager.updateGroupOffset(groupId, topic, partition, messageId);
         }
     }
 

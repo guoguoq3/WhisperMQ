@@ -62,6 +62,13 @@ public class MqConfigProperties {
     /** 新消费组首次订阅时是否从最早消息开始回溯（默认 true，避免订阅生效前发布的消息被丢弃） */
     private boolean newGroupStartFromEarliest = true;
 
+    /**
+     * 每个 topic 的默认分区数（默认 1）。
+     * <p>1 表示与升级前完全一致；大于 1 属于 P1 Stage B 的实验能力，
+     * 在分区投递/再均衡完成前不要在生产使用。</p>
+     */
+    private int defaultPartitions = 1;
+
     //消费端业务线程池 / 控制请求确认（P1）
     /** 消费者业务线程数（0 = 按 CPU 核数自动，默认：0） */
     private int consumerWorkerThreads = 0;
