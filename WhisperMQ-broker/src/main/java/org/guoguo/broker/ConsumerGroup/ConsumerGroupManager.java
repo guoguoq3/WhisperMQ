@@ -194,25 +194,23 @@ public class ConsumerGroupManager {
         // 回溯：主题匹配 + 该消费者的 Tag 匹配 + 分区位点比较，按消息ID升序
         final boolean replayAll = !hasOffset;
         final List<String> subscribeTags = tags;
-        List<Map.Entry<String, MqMessage>> backlog = brokerManager.getMessageMap().entrySet().stream()
-                .filter(entry -> topic.equals(entry.getValue().getTopic()))
-                .filter(entry -> matchesTag(subscribeTags, entry.getValue().getTag()))
-                .filter(entry -> {
-                    if (replayAll) {
-                        return true;
-                    }
-                    int partition = entry.getValue().getPartition();
-                    String partitionOffset = consumerGroup.getOffset(topic, partition);
-                    return partitionOffset == null || compareMessageId(entry.getKey(), partitionOffset) > 0;
-                })
-                .sorted(Comparator.comparingLong(entry -> parseMessageId(entry.getKey())))
-                .toList();
-
-        for (Map.Entry<String, MqMessage> entry : backlog) {
-            brokerManager.pushMessageToGroup(consumerGroup, entry.getKey(), entry.getValue(), false);
-        }
+        java.util.concurrent.atomic.AtomicInteger replayed = new java.util.concurrent.atomic.AtomicInteger();
+        brokerManager.forEachBacklog(topic, (messageId, message) -> {
+            if (!matchesTag(subscribeTags, message.getTag())) {
+                return;
+            }
+            if (!replayAll) {
+                int partition = message.getPartition();
+                String partitionOffset = consumerGroup.getOffset(topic, partition);
+                if (partitionOffset != null && compareMessageId(messageId, partitionOffset) <= 0) {
+                    return;
+                }
+            }
+            brokerManager.pushMessageToGroup(consumerGroup, messageId, message, false);
+            replayed.incrementAndGet();
+        });
         log.info("WhisperMQ Broker 消费者组{}订阅主题{}成功（消费者：{}，标签：{}，回溯：{}条）",
-                groupId, topic, consumerId, tags, backlog.size());
+                groupId, topic, consumerId, tags, replayed.get());
         return null;
     }
 

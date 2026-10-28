@@ -8,7 +8,7 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.guoguo.broker.ConsumerGroup.ConsumerGroupManager;
 import org.guoguo.broker.util.DeadLetterPersistUtil;
-import org.guoguo.broker.util.FilePersistUtil;
+import org.guoguo.broker.store.SegmentMessageStore;
 import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.constant.DeadType;
 import org.guoguo.common.pojo.DTO.ConsumerAckReqDTO;
@@ -57,10 +57,11 @@ public class BrokerManager {
 
     //注入配置文件
     private final MqConfigProperties config;
-    private final FilePersistUtil filePersistUtil;
+    private final SegmentMessageStore messageStore;
     private final DeadLetterPersistUtil deadLetterPersistUtil;
-    /** 分区元数据（P1：默认 1 分区时行为不变） */
     private final TopicMetadata topicMetadata;
+    /** 热数据淘汰顺序（配合 hotCacheSize，避免 messageMap 无限增长） */
+    private final java.util.concurrent.ConcurrentLinkedQueue<String> hotOrder = new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     /** 当前在途（已投递未确认）消息数，供控制台观测 */
     public int getInFlightCount() {
@@ -74,6 +75,82 @@ public class BrokerManager {
             counts.merge(message.getGroupId(), 1, Integer::sum);
         }
         return counts;
+    }
+
+    // ------------------------------------------------------------------ 消息读取（Stage C：内存只保留热数据）
+
+    /** 存活消息总数（磁盘索引 + 未持久化的热数据） */
+    public int getMessageCount() {
+        int count = messageStore.liveCount();
+        for (String messageId : messageMap.keySet()) {
+            if (!messageStore.contains(messageId)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** 按消息 ID 读取；优先热缓存，未命中回源 segment */
+    public MqMessage getMessage(String messageId) {
+        MqMessage hot = messageMap.get(messageId);
+        return hot != null ? hot : messageStore.get(messageId);
+    }
+
+    /** 最近存活消息（倒序），控制台使用；合并热数据以覆盖非持久化消息 */
+    public List<SegmentMessageStore.StoredMessage> getRecentMessages(int limit) {
+        Map<String, MqMessage> merged = new java.util.HashMap<>(messageMap);
+        for (SegmentMessageStore.StoredMessage stored : messageStore.recentLive(Math.max(limit * 2, limit))) {
+            merged.putIfAbsent(stored.messageId(), stored.message());
+        }
+        return merged.entrySet().stream()
+                .sorted((a, b) -> Long.compare(parseMessageId(b.getKey()), parseMessageId(a.getKey())))
+                .limit(Math.max(1, limit))
+                .map(entry -> new SegmentMessageStore.StoredMessage(entry.getKey(), entry.getValue(), false))
+                .toList();
+    }
+
+    /** 按 topic 遍历历史消息（升序）；热数据（含非持久化消息）与 segment 合并去重 */
+    public void forEachBacklog(String topic, java.util.function.BiConsumer<String, MqMessage> consumer) {
+        java.util.TreeMap<Long, String> ids = new java.util.TreeMap<>();
+        java.util.Map<String, MqMessage> merged = new java.util.HashMap<>();
+        for (Map.Entry<String, MqMessage> entry : messageMap.entrySet()) {
+            MqMessage message = entry.getValue();
+            if (message != null && topic.equals(message.getTopic())) {
+                merged.put(entry.getKey(), message);
+                ids.put(parseMessageId(entry.getKey()), entry.getKey());
+            }
+        }
+        messageStore.forEachTopicAfter(topic, null, stored -> {
+            if (merged.putIfAbsent(stored.messageId(), stored.message()) == null) {
+                ids.put(parseMessageId(stored.messageId()), stored.messageId());
+            }
+        });
+        for (String messageId : ids.values()) {
+            consumer.accept(messageId, merged.get(messageId));
+        }
+    }
+
+    /** 各 topic 的存活消息数 */
+    public Map<String, Integer> getTopicMessageCounts() {
+        return messageStore.liveCountsByTopic();
+    }
+
+    /** 存储统计（segment 数、存活/死信条数、字节数） */
+    public Map<String, Object> getStoreStats() {
+        return messageStore.stats();
+    }
+
+    private void cacheMessage(String messageId, MqMessage message) {
+        messageMap.put(messageId, message);
+        hotOrder.add(messageId);
+        int limit = Math.max(0, config.getHotCacheSize());
+        while (messageMap.size() > limit) {
+            String oldest = hotOrder.poll();
+            if (oldest == null) {
+                break;
+            }
+            messageMap.remove(oldest);
+        }
     }
 
     //注入死信队列
@@ -90,14 +167,14 @@ public class BrokerManager {
     // 注入配置
     @Autowired
     public BrokerManager(
-            @Lazy FilePersistUtil filePersistUtil,
+            SegmentMessageStore messageStore,
             @Lazy ConsumerGroupManager consumerGroupManager,
             MqConfigProperties config,
             DeadLetterQueue deadLetterQueue,
             DeadLetterPersistUtil deadLetterPersistUtil,
             TopicMetadata topicMetadata
     ) {
-        this.filePersistUtil = filePersistUtil;
+        this.messageStore = messageStore;
         this.groupManager = consumerGroupManager;
         this.config = config;
         this.deadLetterQueue = deadLetterQueue;
@@ -134,13 +211,13 @@ public class BrokerManager {
                 messageId, mqMessage.getPartition());
         mqMessage.setPartition(partition);
 
-        messageMap.put(messageId, mqMessage);
+        cacheMessage(messageId, mqMessage);
         //默认为true，即进行持久化
         if (mqMessage.isEnduring() && !retry) {
             //持久化
             log.info("WhisperMQ Broker 存储消息：ID={}，主题={}，分区={}", messageId, mqMessage.getTopic(), partition);
             //核心持久化时机是在 Broker 接收到生产者的消息后、尚未发送给消费者之前完成存储
-            filePersistUtil.writeMessage(messageId, mqMessage);
+            messageStore.append(messageId, mqMessage);
         }
         //将生产者生产的消息推送给订阅者
         String topic = mqMessage.getTopic();
@@ -459,7 +536,7 @@ public class BrokerManager {
                 || deadRetryCount >= config.getMaxDeadLetterRetryCount();
         if (terminal) {
             if (mqMessage == null) {
-                MqMessage existing = messageMap.get(originMessageId);
+                MqMessage existing = getMessage(originMessageId);
                 if (existing instanceof MqMessageEnduring) {
                     mqMessage = (MqMessageEnduring) existing;
                 }
@@ -570,7 +647,7 @@ public class BrokerManager {
 
         String deadLetterId = deadLetter.getDeadLetterId();
         try {
-            filePersistUtil.updateDeadLetterMessageStatus(messageId);
+            messageStore.markDead(messageId);
             deadLetterQueue.put(deadLetter);
             deadLetterPersistUtil.writeDeadLetter(deadLetter);
             log.info("WhisperMQ Broker 死信消息{}已入队并持久化，死信原因：{}，组：{}",

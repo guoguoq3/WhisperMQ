@@ -15,7 +15,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.guoguo.broker.handler.MqBrokerHandler;
-import org.guoguo.broker.util.FilePersistUtil;
+import org.guoguo.broker.store.SegmentMessageStore;
 import org.guoguo.common.config.MqConfigProperties;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -38,17 +38,17 @@ public class MqBroker {
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private Channel serverChannel;
-    // 保留该依赖：确保 FilePersistUtil 先于 Broker 完成历史消息恢复（@PostConstruct 顺序）
-    private final FilePersistUtil filePersistUtil;
+    // 保留该依赖：确保消息存储先于 Broker 完成索引加载（@PostConstruct 顺序）
+    private final SegmentMessageStore messageStore;
     private final MqBrokerHandler mqBrokerHandler;
 
     // 构造器注入配置
     @Autowired
     public MqBroker(MqConfigProperties config, MqBrokerHandler mqBrokerHandler,
-                    FilePersistUtil filePersistUtil) {
+                    SegmentMessageStore messageStore) {
         this.config = config;
         this.mqBrokerHandler = mqBrokerHandler;
-        this.filePersistUtil = filePersistUtil;
+        this.messageStore = messageStore;
     }
 
     // 启动时自动执行（初始化 Netty 服务），非阻塞

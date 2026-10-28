@@ -8,6 +8,7 @@ import org.guoguo.broker.ConsumerGroup.ConsumerGroupManager;
 import org.guoguo.broker.core.BrokerManager;
 import org.guoguo.broker.core.MqBroker;
 import org.guoguo.broker.core.TopicMetadata;
+import org.guoguo.broker.store.SegmentMessageStore;
 import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.pojo.DTO.DeadLetterDTO;
 import org.guoguo.common.pojo.DTO.PushMessageDTO;
@@ -193,7 +194,8 @@ public class ConsoleService {
         Map<String, Object> info = new LinkedHashMap<>();
         info.put("host", config.getBrokerHost());
         info.put("port", config.getBrokerPort());
-        info.put("messages", brokerManager.getMessageMap().size());
+        info.put("messages", brokerManager.getMessageCount());
+        info.put("store", brokerManager.getStoreStats());
         info.put("groups", groupManager.getGroupMap().size());
         info.put("deadLetters", deadLetterQueue.size());
         info.put("inFlight", brokerManager.getInFlightCount());
@@ -215,10 +217,7 @@ public class ConsoleService {
     }
 
     private List<Map<String, Object>> topicInfos() {
-        Map<String, Integer> counts = new TreeMap<>();
-        for (MqMessage message : brokerManager.getMessageMap().values()) {
-            counts.merge(message.getTopic(), 1, Integer::sum);
-        }
+        Map<String, Integer> counts = new TreeMap<>(brokerManager.getTopicMessageCounts());
         for (ConsumerGroup group : groupManager.getGroupMap().values()) {
             for (String topic : group.getSubscribeMap().keySet()) {
                 counts.putIfAbsent(topic, 0);
@@ -276,9 +275,9 @@ public class ConsoleService {
         return dto == null ? null : toDeadLetterMap(dto, true);
     }
 
-    /** 消息详情：优先查内存；已被死信清理的消息按原 ID 去死信队列里找 */
+    /** 消息详情：优先热缓存，未命中回源 segment；已被死信清理的消息按原 ID 去死信队列里找 */
     public Map<String, Object> messageDetail(String messageId) {
-        MqMessage message = brokerManager.getMessageMap().get(messageId);
+        MqMessage message = brokerManager.getMessage(messageId);
         if (message != null) {
             Map<String, Object> item = messageFields(messageId, message, true);
             item.put("status", "IN_MEMORY");
@@ -340,17 +339,10 @@ public class ConsoleService {
     }
 
     private List<Map<String, Object>> recentMessages() {
-        List<Map.Entry<String, MqMessage>> entries = new ArrayList<>(brokerManager.getMessageMap().entrySet());
-        entries.sort((a, b) -> Long.compare(parseId(b.getKey()), parseId(a.getKey())));
-
-        List<Map<String, Object>> list = new ArrayList<>();
         int limit = Math.max(1, consoleProperties.getMaxRecentMessages());
-        for (Map.Entry<String, MqMessage> entry : entries) {
-            if (list.size() >= limit) {
-                break;
-            }
-            MqMessage message = entry.getValue();
-            list.add(messageFields(entry.getKey(), message, false));
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (SegmentMessageStore.StoredMessage stored : brokerManager.getRecentMessages(limit)) {
+            list.add(messageFields(stored.messageId(), stored.message(), false));
         }
         return list;
     }

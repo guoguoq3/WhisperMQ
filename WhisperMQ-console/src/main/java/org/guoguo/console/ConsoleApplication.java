@@ -28,6 +28,7 @@ import org.springframework.context.annotation.ComponentScan;
         "org.guoguo.broker.core",
         "org.guoguo.broker.handler",
         "org.guoguo.broker.util",
+        "org.guoguo.broker.store",
         "org.guoguo.broker.ConsumerGroup"
 })
 public class ConsoleApplication {

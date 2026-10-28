@@ -69,6 +69,16 @@ public class MqConfigProperties {
      */
     private int defaultPartitions = 1;
 
+    //存储与保留（P1 Stage C）
+    /** 启动后内存中保留的热消息条数（默认 1000；0 表示不缓存消息体） */
+    private int hotCacheSize = 1000;
+    /** 消息保留时长（毫秒，默认 0 表示不按时间清理） */
+    private long retentionMillis = 0;
+    /** 消息日志总容量上限（字节，默认 0 表示不限） */
+    private long retentionMaxBytes = 0;
+    /** 保留策略检查间隔（毫秒，默认 60 秒） */
+    private long retentionCheckIntervalMillis = 60000;
+
     //消费端业务线程池 / 控制请求确认（P1）
     /** 消费者业务线程数（0 = 按 CPU 核数自动，默认：0） */
     private int consumerWorkerThreads = 0;
