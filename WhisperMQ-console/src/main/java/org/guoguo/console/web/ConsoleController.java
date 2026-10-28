@@ -67,6 +67,15 @@ public class ConsoleController {
                 request.enduring(), request.bizKey());
     }
 
+    /** 消息详情（完整 payload）；内存里没有时会到死信队列里按原消息 ID 查找 */
+    @GetMapping("/messages/{id}")
+    public ResponseEntity<Map<String, Object>> messageDetail(@PathVariable String id) {
+        Map<String, Object> detail = console.messageDetail(id);
+        return detail == null
+                ? ResponseEntity.status(404).body(error("消息不存在或已被清理：" + id))
+                : ResponseEntity.ok(detail);
+    }
+
     // ------------------------------------------------------------------ 消费者
 
     @PostMapping("/consumers")
@@ -96,6 +105,15 @@ public class ConsoleController {
     @GetMapping("/deadletters")
     public Map<String, Object> deadLetters() {
         return Map.of("deadLetters", console.deadLetters());
+    }
+
+    /** 死信详情（完整 payload + 原始 JSON） */
+    @GetMapping("/deadletters/{id}")
+    public ResponseEntity<Map<String, Object>> deadLetterDetail(@PathVariable String id) {
+        Map<String, Object> detail = console.deadLetterDetail(id);
+        return detail == null
+                ? ResponseEntity.status(404).body(error("死信不存在或已被重放：" + id))
+                : ResponseEntity.ok(detail);
     }
 
     @PostMapping("/deadletters/{id}/replay")

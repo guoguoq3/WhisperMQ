@@ -247,32 +247,73 @@ public class ConsoleService {
     public List<Map<String, Object>> deadLetters() {
         List<Map<String, Object>> list = new ArrayList<>();
         for (DeadLetterDTO dto : deadLetterQueue.list()) {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("id", dto.getDeadLetterId());
-            item.put("messageId", dto.getMessageId());
-            item.put("deadType", dto.getDeadType() == null ? null : dto.getDeadType().name());
-            item.put("deadTime", dto.getDeadTime() == null ? null : dto.getDeadTime().toString());
-            item.put("retryCount", dto.getDeadRetryCount());
-            try {
-                PushMessageDTO push = JSON.parseObject(dto.getJson(), PushMessageDTO.class);
-                if (push != null) {
-                    item.put("groupId", push.getConsumerGroup());
-                    MqMessage message = JSON.parseObject(push.getJson(), MqMessage.class);
-                    if (message != null) {
-                        item.put("topic", message.getTopic());
-                        item.put("tag", message.getTag());
-                        item.put("payload", truncate(message.getPayload(), 300));
-                    }
-                }
-            } catch (Exception e) {
-                item.put("payload", "<消息体解析失败>");
-            }
-            list.add(item);
+            list.add(toDeadLetterMap(dto, false));
             if (list.size() >= 100) {
                 break;
             }
         }
         return list;
+    }
+
+    /** 死信详情（完整 payload / 原始 json），供页面点击查看 */
+    public Map<String, Object> deadLetterDetail(String deadLetterId) {
+        DeadLetterDTO dto = deadLetterQueue.get(deadLetterId);
+        return dto == null ? null : toDeadLetterMap(dto, true);
+    }
+
+    /** 消息详情：优先查内存；已被死信清理的消息按原 ID 去死信队列里找 */
+    public Map<String, Object> messageDetail(String messageId) {
+        MqMessage message = brokerManager.getMessageMap().get(messageId);
+        if (message != null) {
+            Map<String, Object> item = messageFields(messageId, message, true);
+            item.put("status", "IN_MEMORY");
+            return item;
+        }
+        for (DeadLetterDTO dto : deadLetterQueue.list()) {
+            if (messageId.equals(dto.getMessageId())) {
+                Map<String, Object> item = toDeadLetterMap(dto, true);
+                item.put("status", "DEAD_LETTER");
+                return item;
+            }
+        }
+        return null;
+    }
+
+    private Map<String, Object> toDeadLetterMap(DeadLetterDTO dto, boolean full) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", dto.getDeadLetterId());
+        item.put("messageId", dto.getMessageId());
+        item.put("deadType", dto.getDeadType() == null ? null : dto.getDeadType().name());
+        item.put("deadTime", dto.getDeadTime() == null ? null : dto.getDeadTime().toString());
+        item.put("retryCount", dto.getDeadRetryCount());
+        try {
+            PushMessageDTO push = JSON.parseObject(dto.getJson(), PushMessageDTO.class);
+            if (push != null) {
+                item.put("groupId", push.getConsumerGroup());
+                MqMessage message = JSON.parseObject(push.getJson(), MqMessage.class);
+                if (message != null) {
+                    item.putAll(messageFields(dto.getMessageId(), message, full));
+                }
+            }
+        } catch (Exception e) {
+            item.put("payload", "<消息体解析失败>");
+        }
+        if (full) {
+            item.put("deadLetterJson", dto.getJson());
+        }
+        return item;
+    }
+
+    private Map<String, Object> messageFields(String messageId, MqMessage message, boolean full) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("messageId", messageId);
+        item.put("topic", message.getTopic());
+        item.put("tag", message.getTag());
+        item.put("bizKey", message.getBizKey());
+        item.put("payload", full ? message.getPayload() : truncate(message.getPayload(), 300));
+        item.put("payloadLength", message.getPayload() == null ? 0 : message.getPayload().length());
+        item.put("enduring", !(message instanceof MqMessageEnduring) || ((MqMessageEnduring) message).isEnduring());
+        return item;
     }
 
     public Map<String, Object> replayDeadLetter(String deadLetterId) {
@@ -294,13 +335,7 @@ public class ConsoleService {
                 break;
             }
             MqMessage message = entry.getValue();
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("messageId", entry.getKey());
-            item.put("topic", message.getTopic());
-            item.put("tag", message.getTag());
-            item.put("payload", truncate(message.getPayload(), 300));
-            item.put("enduring", !(message instanceof MqMessageEnduring) || ((MqMessageEnduring) message).isEnduring());
-            list.add(item);
+            list.add(messageFields(entry.getKey(), message, false));
         }
         return list;
     }

@@ -36,18 +36,21 @@ java -jar WhisperMQ-console/target/WhisperMQ-console-1.0-SNAPSHOT.jar
 控制台进程内嵌 Broker（默认端口 `9999`），页面上创建的消费者/生产者都是**真实 TCP 客户端**，
 走与外部使用完全一致的协议，不是模拟数据。
 
+![控制台预览](docs/console-light.png)
+
 ## 控制台能做什么
 
-- **发送消息**：topic、tag、payload、是否持久化（enduring）
+- **发送消息**：topic、tag、payload、是否持久化（enduring），带示例内容一键填入
 - **创建消费者**：选择消费组、topic、tag（支持 `*` 与 `TAG_A,TAG_B`），并选择业务行为：
   - 正常消费 / 一直失败（ACK_FAIL）/ 首次失败（看重投）/ 拒绝并重试（死信链路）/
     抛异常（验证业务线程隔离）/ 慢消费 500ms
-- **观察 Broker**：消息数、在途数、组数、在线消费者数、死信数
-- **消费者组**：在线消费者、订阅关系、组位点、消费者级 Tag、在途消息
-- **Broker 内存消息**：最近的 `messageMap` 内容
-- **死信队列**：查看并一键**重放**回原消费组
+- **观察 Broker**：消息数、在途数、组数、在线消费者数、死信数；顶栏指标悬停可预览明细、点击跳转到对应区域
+- **消费者组**：在线消费者、订阅关系、组位点、消费者级 Tag、在途消息；点击行查看详情
+- **Broker 内存消息**：最近的 `messageMap` 内容，支持按 Topic / Tag / 内容过滤，点击行查看完整 payload
+- **死信队列**：查看、过滤并一键**重放**回原消费组；点击行查看死信详情与原始 JSON
 - **一键自检**：4 个端到端场景（发送→消费→ACK→位点、ACK_FAIL 重投、Tag 隔离、死信重放）
-- **一键 Maven 测试**：在仓库根目录执行 `mvn -o test`，日志实时回显
+- **一键 Maven 测试**：在仓库根目录执行 `mvn -o test`，日志实时回显、可终止
+- 右上角「使用说明」内置概念解释与建议体验顺序
 
 页面上的所有数据通过 `GET /api/overview` 每 2 秒轮询刷新。
 
@@ -57,10 +60,12 @@ java -jar WhisperMQ-console/target/WhisperMQ-console-1.0-SNAPSHOT.jar
 |---|---|---|
 | GET | `/api/overview` | Broker / 组 / 消费者 / 消息 / 死信快照 |
 | POST | `/api/messages` | 发送消息 `{topic,tag,payload,enduring}` |
+| GET | `/api/messages/{id}` | 消息详情（完整 payload；已死信的会回溯到死信队列） |
 | POST | `/api/consumers` | 创建消费者 `{group,topic,tags,mode}` |
 | DELETE | `/api/consumers/{id}` | 停止消费者 |
 | PATCH | `/api/consumers/{id}/mode` | 切换业务行为 `{mode}` |
 | GET | `/api/deadletters` | 死信列表 |
+| GET | `/api/deadletters/{id}` | 死信详情（完整 payload + 原始 JSON） |
 | POST | `/api/deadletters/{id}/replay` | 重放死信 |
 | POST/GET | `/api/test/self` | 启动 / 查询自检 |
 | POST/GET | `/api/test/maven` | 启动 / 查询 Maven 测试 |

@@ -6,206 +6,585 @@
 <title>WhisperMQ 控制台</title>
 <style>
   :root {
-    --bg: #0d1117;
-    --panel: #161b22;
-    --panel-2: #1c2330;
-    --line: #2a3441;
-    --text: #e6edf3;
-    --muted: #8b98a5;
-    --accent: #4493f8;
-    --ok: #3fb950;
-    --bad: #f85149;
-    --warn: #d29922;
-    --radius: 10px;
+    --bg: #f4f6fb;
+    --card: #ffffff;
+    --line: #e4e9f2;
+    --line-strong: #d3dae6;
+    --text: #111827;
+    --muted: #6b7280;
+    --muted-2: #9aa3b2;
+    --accent: #2563eb;
+    --accent-soft: #eef4ff;
+    --ok: #15803d;
+    --ok-bg: #ecfdf3;
+    --bad: #b91c1c;
+    --bad-bg: #fef2f2;
+    --warn: #b45309;
+    --warn-bg: #fffbeb;
+    --radius: 14px;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 6px 16px -8px rgba(16, 24, 40, .12);
   }
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font: 13px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   }
-  header {
-    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 12px 20px; border-bottom: 1px solid var(--line);
-    position: sticky; top: 0; background: rgba(13, 17, 23, .95); backdrop-filter: blur(6px); z-index: 10;
+  code, .mono, pre { font-family: ui-monospace, SFMono-Regular, Consolas, "Courier New", monospace; }
+
+  /* ---------------------------------------------------------------- 顶栏 */
+  .topbar {
+    position: sticky; top: 0; z-index: 30;
+    display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    padding: 12px 28px; background: rgba(255, 255, 255, .92);
+    border-bottom: 1px solid var(--line); backdrop-filter: blur(10px);
   }
-  .brand { font-size: 16px; font-weight: 700; letter-spacing: .3px; }
-  .brand .sub { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo {
+    width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center;
+    background: linear-gradient(135deg, #2563eb, #60a5fa); color: #fff;
+    font-weight: 800; font-size: 18px; box-shadow: 0 6px 14px -6px rgba(37, 99, 235, .6);
+  }
+  .brand h1 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: .2px; }
+  .brand p { margin: 0; font-size: 11.5px; color: var(--muted); }
+
   .stats { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
   .stat {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
-    padding: 4px 10px; color: var(--muted); white-space: nowrap;
+    position: relative; display: flex; align-items: baseline; gap: 6px;
+    padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px;
+    background: #fff; cursor: default; transition: border-color .15s, box-shadow .15s, transform .15s;
   }
-  .stat b { color: var(--text); margin-left: 4px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; background: var(--muted); }
-  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
-  .dot.off { background: var(--bad); }
+  .stat[data-goto] { cursor: pointer; }
+  .stat[data-goto]:hover { border-color: #bfd3ff; box-shadow: 0 4px 12px -6px rgba(37, 99, 235, .5); transform: translateY(-1px); }
+  .stat-label { font-size: 11.5px; color: var(--muted); }
+  .stat-value { font-size: 14px; font-weight: 700; }
+  .stat.has-alert .stat-value { color: var(--warn); }
+  .tip {
+    position: absolute; top: calc(100% + 10px); left: 0; width: 330px; max-width: 80vw;
+    background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+    box-shadow: 0 18px 40px -18px rgba(16, 24, 40, .35);
+    opacity: 0; visibility: hidden; transform: translateY(-4px); transition: .15s; pointer-events: none; z-index: 40;
+  }
+  .stat:hover .tip, .stat:focus-within .tip { opacity: 1; visibility: visible; transform: translateY(0); }
+  .stat:last-child .tip { left: auto; right: 0; }
+  .tip-title { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .tip-item {
+    display: flex; gap: 8px; padding: 3px 0; font-size: 12px; border-top: 1px dashed var(--line);
+  }
+  .tip-item:first-of-type { border-top: none; }
+  .tip-item .k { color: var(--accent); font-size: 11px; white-space: nowrap; }
+  .tip-item .v { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tip-empty { font-size: 12px; color: var(--muted-2); }
+  .tip-footer { margin-top: 8px; font-size: 11px; color: var(--accent); }
 
+  .top-actions { display: flex; gap: 8px; }
+
+  /* ---------------------------------------------------------------- 引导条 */
+  .intro {
+    margin: 18px 28px 0; padding: 14px 18px; border-radius: var(--radius);
+    background: linear-gradient(90deg, #eef4ff, #f7faff 60%, #fff);
+    border: 1px solid #dbe7ff; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  }
+  .intro .steps { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12.5px; color: #334155; }
+  .intro .step { display: flex; gap: 8px; align-items: center; }
+  .intro .num {
+    width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 1px solid #bcd2ff;
+    color: var(--accent); font-size: 11px; font-weight: 700; display: grid; place-items: center;
+  }
+  .intro .actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* ---------------------------------------------------------------- 布局 */
   main {
-    display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px;
-    padding: 16px 20px 40px;
+    display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px;
+    align-items: start; padding: 16px 28px 48px;
   }
   .card {
-    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-    padding: 14px 16px; min-width: 0;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px 20px; box-shadow: var(--shadow); min-width: 0; scroll-margin-top: 92px;
   }
-  .card h2 {
-    margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--text);
-    display: flex; align-items: center; gap: 8px;
+  .card.flash { animation: flash 1.4s ease; }
+  @keyframes flash {
+    0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, .45); }
+    40% { box-shadow: 0 0 0 6px rgba(37, 99, 235, .18); }
+    100% { box-shadow: var(--shadow); }
   }
-  .hint { font-size: 11px; color: var(--muted); font-weight: 400; }
-  .span-4 { grid-column: span 4; }
+  .card-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 4px; }
+  .card-head h2 { margin: 0; font-size: 15px; font-weight: 700; }
+  .card-head .badge-soft {
+    font-size: 10.5px; color: var(--accent); background: var(--accent-soft);
+    border: 1px solid #d7e5ff; border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+  }
+  .desc { margin: 6px 0 14px; font-size: 12.5px; color: var(--muted); }
+  .span-5 { grid-column: span 5; }
   .span-6 { grid-column: span 6; }
   .span-7 { grid-column: span 7; }
-  .span-8 { grid-column: span 8; }
   .span-12 { grid-column: span 12; }
 
-  label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
-  input, select, textarea, button {
-    font: inherit; color: var(--text); background: var(--panel-2);
-    border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; outline: none;
+  /* ---------------------------------------------------------------- 表单 */
+  form { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .field.full { grid-column: span 2; }
+  label { font-size: 12px; font-weight: 600; color: #374151; display: flex; gap: 6px; align-items: baseline; }
+  .req { color: var(--bad); font-size: 10.5px; font-weight: 500; }
+  .opt { color: var(--muted-2); font-size: 10.5px; font-weight: 400; }
+  input, select, textarea {
+    font: inherit; font-size: 13px; color: var(--text); background: #fff;
+    border: 1px solid var(--line-strong); border-radius: 10px; padding: 9px 11px; outline: none;
+    transition: border-color .15s, box-shadow .15s; width: 100%;
   }
-  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
-  textarea { resize: vertical; min-height: 64px; font-family: ui-monospace, Consolas, monospace; }
-  form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  form .full { grid-column: span 2; }
-  form .check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); }
-  form button { grid-column: span 2; }
+  input:focus, select:focus, textarea:focus {
+    border-color: #93b4ff; box-shadow: 0 0 0 3px rgba(37, 99, 235, .14);
+  }
+  textarea { resize: vertical; min-height: 86px; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+  .hint { margin: 0; font-size: 11.5px; color: var(--muted-2); }
+  .examples { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+  .chip {
+    font-size: 11.5px; padding: 3px 9px; border-radius: 999px; cursor: pointer;
+    background: #f6f8fc; border: 1px solid var(--line-strong); color: #374151;
+  }
+  .chip:hover { background: var(--accent-soft); border-color: #bfd3ff; color: var(--accent); }
+  .checkbox { grid-column: span 2; display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: #374151; font-weight: 400; }
+  .checkbox input { width: 16px; height: 16px; margin-top: 2px; }
+  .form-actions { grid-column: span 2; display: flex; align-items: center; gap: 12px; }
+
   button {
-    cursor: pointer; background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
-    transition: filter .15s;
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    border-radius: 10px; padding: 9px 16px; border: 1px solid transparent;
+    transition: filter .15s, background .15s, box-shadow .15s;
   }
-  button:hover { filter: brightness(1.1); }
-  button:disabled { opacity: .5; cursor: not-allowed; }
-  button.ghost { background: transparent; color: var(--text); border-color: var(--line); }
-  button.danger { background: transparent; color: var(--bad); border-color: #5b2b2b; }
-  button.small { padding: 3px 8px; font-size: 11px; font-weight: 500; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .row > input, .row > select { flex: 1; min-width: 120px; }
+  button.primary { background: var(--accent); color: #fff; box-shadow: 0 8px 16px -10px rgba(37, 99, 235, .8); }
+  button.primary:hover { filter: brightness(1.06); }
+  button.ghost { background: #fff; border-color: var(--line-strong); color: #374151; }
+  button.ghost:hover { background: #f8fafc; }
+  button.danger { background: #fff; border-color: #f3c6c6; color: var(--bad); }
+  button.danger:hover { background: var(--bad-bg); }
+  button.small { padding: 4px 10px; font-size: 11.5px; border-radius: 8px; font-weight: 500; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  .link { background: none; border: none; padding: 0; color: var(--accent); font-weight: 500; font-size: 12px; cursor: pointer; }
+  .link:hover { text-decoration: underline; }
 
-  .result, .log {
-    margin: 10px 0 0; padding: 10px; max-height: 220px; overflow: auto;
-    background: #0b0f14; border: 1px solid var(--line); border-radius: 8px;
-    font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; color: #b9c4cf; white-space: pre-wrap;
+  /* ---------------------------------------------------------------- 结果 */
+  .result-box {
+    margin-top: 14px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+    background: #fbfcff; font-size: 12.5px;
   }
-  .log { max-height: 320px; }
+  .result-box.ok { border-color: #c9ecd7; background: var(--ok-bg); }
+  .result-box.bad { border-color: #f5caca; background: var(--bad-bg); }
+  .result-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .hidden { display: none !important; }
 
-  .session {
-    border: 1px solid var(--line); border-radius: 9px; padding: 10px; margin-bottom: 10px; background: var(--panel-2);
+  /* ---------------------------------------------------------------- 列表 */
+  .empty {
+    padding: 22px 16px; text-align: center; color: var(--muted); font-size: 12.5px;
+    background: #fbfcfe; border: 1px dashed var(--line-strong); border-radius: 12px;
   }
-  .session-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
-  .session-head b { font-size: 12.5px; }
-  .pill {
-    font-size: 11px; padding: 2px 7px; border-radius: 999px;
-    background: #202a37; border: 1px solid var(--line); color: var(--muted); max-width: 260px;
+  .empty b { color: #374151; }
+  .empty .link { margin-left: 4px; }
+
+  .consumer {
+    border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; background: #fff;
+  }
+  .consumer:hover { border-color: #cfdcf7; }
+  .consumer-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .consumer-head b { font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted-2); display: inline-block; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 0 3px rgba(21, 128, 61, .15); }
+  .tag {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #f3f6fb;
+    border: 1px solid var(--line); color: #4b5563; max-width: 240px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .pill.tags { color: var(--accent); border-color: #24405f; }
-  .session-head select { padding: 3px 6px; font-size: 11px; }
-  .counters { font-size: 11.5px; color: var(--muted); margin: 4px 0; }
-  .counters b { color: var(--text); }
-  .counters code { color: var(--accent); font-size: 11px; }
-  .mini { margin: 4px 0 0; padding: 0; list-style: none; font-size: 11px; color: var(--muted); }
-  .mini li { padding: 2px 0; border-top: 1px dashed #222b37; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mini li:first-child { border-top: none; }
+  .tag.tags { background: var(--accent-soft); border-color: #d7e5ff; color: var(--accent); }
+  .consumer-head select { width: auto; padding: 4px 8px; font-size: 11.5px; border-radius: 8px; }
+  .consumer-head .spacer { flex: 1; }
+  .metrics { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .metrics b { color: var(--text); }
+  .metrics .thread { color: var(--accent); font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+  .recent { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 6px; }
+  .recent-item {
+    display: flex; gap: 8px; font-size: 11.5px; color: #4b5563; padding: 3px 0; cursor: pointer;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .recent-item:hover { color: var(--accent); }
+  .recent-item .time { color: var(--muted-2); font-size: 10.5px; flex: none; }
 
-  table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
-  td.mono, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
-  .trunc { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .empty { color: var(--muted); padding: 10px 0; font-size: 12px; }
+  /* ---------------------------------------------------------------- 表格 */
+  .filter-row { display: flex; gap: 8px; align-items: center; margin: 0 0 10px; }
+  .filter-row .filter { max-width: 320px; padding: 7px 10px; font-size: 12.5px; }
+  .filter-row .count { font-size: 11.5px; color: var(--muted-2); }
+  .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  th { background: #f8fafc; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .3px; text-transform: uppercase; white-space: nowrap; }
+  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable:hover { background: #f7faff; }
+  td .sub { display: block; color: var(--muted-2); font-size: 11px; margin-top: 2px; }
+  .trunc { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mono { font-size: 11.5px; }
 
-  .badge { font-size: 10.5px; padding: 1px 6px; border-radius: 999px; border: 1px solid; }
-  .badge.ok { color: var(--ok); border-color: #1d4429; background: #10231a; }
-  .badge.bad { color: var(--bad); border-color: #5b2b2b; background: #2a1416; }
-  .badge.run { color: var(--warn); border-color: #4d3a12; background: #241c0b; }
+  .badge { display: inline-block; font-size: 10.5px; padding: 1px 8px; border-radius: 999px; border: 1px solid; }
+  .badge.ok { color: var(--ok); background: var(--ok-bg); border-color: #bfe6cd; }
+  .badge.bad { color: var(--bad); background: var(--bad-bg); border-color: #f3c6c6; }
+  .badge.run { color: var(--warn); background: var(--warn-bg); border-color: #f0d9a8; }
+  .badge.idle { color: var(--muted); background: #f6f8fb; border-color: var(--line-strong); }
 
+  /* ---------------------------------------------------------------- 测试 */
+  .test-block { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+  .test-block h3 { margin: 0 0 4px; font-size: 13px; }
+  .test-block .desc { margin: 0 0 10px; }
   .steps { margin: 10px 0 0; padding: 0; list-style: none; }
-  .steps li { padding: 4px 0; border-bottom: 1px dashed #222b37; font-size: 12px; }
-  .steps li .icon { display: inline-block; width: 16px; }
+  .steps li { display: flex; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: 12px; }
+  .steps li:last-child { border-bottom: none; }
+  .steps .icon { width: 16px; flex: none; font-weight: 700; }
   .steps li.ok .icon { color: var(--ok); }
   .steps li.bad .icon { color: var(--bad); }
-  .steps li .detail { color: var(--muted); font-size: 11.5px; margin-left: 18px; display: block; }
+  .steps .detail { display: block; color: var(--muted); font-size: 11.5px; }
+  .log {
+    margin: 10px 0 0; padding: 10px 12px; max-height: 260px; overflow: auto;
+    background: #0f172a; color: #cbd5e1; border-radius: 10px;
+    font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-all;
+  }
+  .log:empty { display: none; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 11.5px; margin-top: 8px; }
 
-  @media (max-width: 1200px) {
-    .span-4, .span-6, .span-7, .span-8 { grid-column: span 12; }
+  /* ---------------------------------------------------------------- 弹窗 */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(15, 23, 42, .38); backdrop-filter: blur(2px);
+    display: grid; place-items: center; padding: 24px; z-index: 100;
+  }
+  .modal {
+    width: min(760px, 100%); max-height: 86vh; overflow: auto; background: #fff;
+    border-radius: 16px; box-shadow: 0 30px 60px -20px rgba(15, 23, 42, .45); border: 1px solid var(--line);
+  }
+  .modal-head {
+    display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; background: #fff; z-index: 1;
+  }
+  .modal-head h3 { margin: 0; font-size: 15px; flex: 1; }
+  .modal-body { padding: 18px 20px 22px; }
+  .detail { display: grid; grid-template-columns: 110px 1fr; gap: 8px 14px; margin: 0; font-size: 12.5px; }
+  .detail dt { color: var(--muted); }
+  .detail dd { margin: 0; word-break: break-all; }
+  .code {
+    margin: 0; padding: 10px 12px; background: #f8fafc; border: 1px solid var(--line);
+    border-radius: 10px; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 260px; overflow: auto;
+  }
+  .kv { display: flex; gap: 8px; flex-wrap: wrap; }
+  .kv .tag { max-width: none; }
+  .modal-actions { display: flex; gap: 8px; margin-top: 16px; }
+
+  /* ---------------------------------------------------------------- Toast */
+  .toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 200; }
+  .toast {
+    min-width: 220px; max-width: 420px; padding: 11px 14px; border-radius: 10px; background: #111827; color: #fff;
+    font-size: 12.5px; box-shadow: 0 16px 30px -12px rgba(0, 0, 0, .4);
+    animation: slideIn .18s ease; border-left: 3px solid var(--accent);
+  }
+  .toast.ok { border-left-color: #22c55e; }
+  .toast.bad { border-left-color: #ef4444; }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  @media (max-width: 1240px) {
+    .span-5, .span-6, .span-7 { grid-column: span 12; }
+    .stats { width: 100%; margin-left: 0; }
+  }
+  @media (max-width: 720px) {
+    .topbar, main, .intro { padding-left: 16px; padding-right: 16px; margin-left: 0; margin-right: 0; }
+    form { grid-template-columns: 1fr; }
+    .field.full, .checkbox, .form-actions { grid-column: span 1; }
+    .detail { grid-template-columns: 1fr; }
+    .detail dt { margin-top: 6px; }
   }
 </style>
 </head>
 <body>
-<header>
-  <div class="brand">WhisperMQ <span class="sub">本地控制台 · 内嵌 Broker + 真实生产者/消费者</span></div>
-  <div class="stats" id="stats"></div>
-  <button class="ghost small" id="refreshBtn" title="立即刷新">刷新</button>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">W</div>
+    <div>
+      <h1>WhisperMQ 控制台</h1>
+      <p>内嵌 Broker · 真实生产者 / 消费者 · 本地演示</p>
+    </div>
+  </div>
+
+  <div class="stats" id="stats">
+    <div class="stat" data-goto="#messagesCard" data-stat="messages" tabindex="0">
+      <span class="stat-label">消息</span><span class="stat-value" data-field="messages">-</span>
+      <div class="tip">
+        <div class="tip-title">Broker 内存中的消息（点击查看列表）</div>
+        <div data-field="messagesPreview"></div>
+        <div class="tip-footer">点击跳转到「Broker 内存消息」</div>
+      </div>
+    </div>
+    <div class="stat" data-goto="#groupsCard" data-stat="inFlight" tabindex="0">
+      <span class="stat-label">在途</span><span class="stat-value" data-field="inFlight">-</span>
+      <div class="tip">
+        <div class="tip-title">已投递但尚未收到 ACK 的消息（点击查看分组）</div>
+        <div data-field="inFlightPreview"></div>
+        <div class="tip-footer">超过 ACK 超时会被重新投递</div>
+      </div>
+    </div>
+    <div class="stat" data-goto="#groupsCard" data-stat="groups" tabindex="0">
+      <span class="stat-label">组</span><span class="stat-value" data-field="groups">-</span>
+      <div class="tip">
+        <div class="tip-title">消费者组（点击查看位点与订阅）</div>
+        <div data-field="groupsPreview"></div>
+        <div class="tip-footer">同组共享位点，不同组各自收到全量消息</div>
+      </div>
+    </div>
+    <div class="stat" data-goto="#consumerCard" data-stat="online" tabindex="0">
+      <span class="stat-label">在线</span><span class="stat-value" data-field="online">-</span>
+      <div class="tip">
+        <div class="tip-title">在线消费者（点击查看消费者卡片）</div>
+        <div data-field="onlinePreview"></div>
+        <div class="tip-footer">连接断开后会自动移除</div>
+      </div>
+    </div>
+    <div class="stat" data-goto="#dlqCard" data-stat="deadLetters" tabindex="0">
+      <span class="stat-label">死信</span><span class="stat-value" data-field="deadLetters">-</span>
+      <div class="tip">
+        <div class="tip-title">死信队列（点击查看并重放）</div>
+        <div data-field="deadLettersPreview"></div>
+        <div class="tip-footer">投递次数耗尽或业务拒绝后进入</div>
+      </div>
+    </div>
+    <div class="stat" data-goto="#messagesCard" data-stat="topics" tabindex="0">
+      <span class="stat-label">主题</span><span class="stat-value" data-field="topics">-</span>
+      <div class="tip">
+        <div class="tip-title">已知 Topic（点击查看消息）</div>
+        <div data-field="topicsPreview"></div>
+        <div class="tip-footer">来自消息与订阅关系</div>
+      </div>
+    </div>
+    <div class="stat" data-stat="config" tabindex="0">
+      <span class="stat-label">可靠性</span><span class="stat-value" data-field="config">-</span>
+      <div class="tip">
+        <div class="tip-title">当前可靠性参数</div>
+        <div data-field="configPreview"></div>
+        <div class="tip-footer">修改 WhisperMQ-console/application.properties 后重启生效</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="top-actions">
+    <button class="ghost small" id="helpBtn">使用说明</button>
+    <button class="ghost small" id="refreshBtn">刷新</button>
+  </div>
 </header>
 
+<div class="intro">
+  <div class="steps">
+    <div class="step"><span class="num">1</span>创建消费者</div>
+    <div class="step"><span class="num">2</span>发送消息</div>
+    <div class="step"><span class="num">3</span>观察位点 / 死信</div>
+    <div class="step"><span class="num">4</span>一键自检</div>
+  </div>
+  <div class="actions">
+    <button class="primary small" id="quickStartBtn">一键体验</button>
+    <button class="ghost small" id="selfTestTopBtn">运行自检</button>
+    <button class="ghost small" id="mavenTopBtn">运行 Maven 测试</button>
+  </div>
+</div>
+
 <main>
-  <section class="card span-4">
-    <h2>发送消息 <span class="hint">P_SEND_MSG</span></h2>
-    <form id="sendForm">
-      <label>Topic<input name="topic" value="DEMO_TOPIC" required></label>
-      <label>Tag<input name="tag" value="TAG1" placeholder="可空"></label>
-      <label class="full">Payload<textarea name="payload" rows="3">Hello WhisperMQ</textarea></label>
-      <label class="check"><input type="checkbox" name="enduring" checked> 持久化（enduring）</label>
-      <button type="submit">发送</button>
-    </form>
-    <pre class="result" id="sendResult">等待发送…</pre>
-  </section>
-
-  <section class="card span-8">
-    <h2>消费者 <span class="hint">每个都是真实 TCP 客户端：joinGroup → groupSubscribe → 监听器</span></h2>
-    <form id="consumerForm" class="row" style="display:flex;">
-      <input name="group" placeholder="消费组" value="DEMO_GROUP" required>
-      <input name="topic" placeholder="Topic" value="DEMO_TOPIC" required>
-      <input name="tags" placeholder="tags（逗号分隔，默认 *）" value="*">
-      <select name="mode" title="业务行为">
-        <option value="SUCCESS">正常消费</option>
-        <option value="FAIL">一直失败（ACK_FAIL）</option>
-        <option value="FAIL_ONCE">首次失败（看重投）</option>
-        <option value="REJECT_RETRY">拒绝并重试（死信链路）</option>
-        <option value="THROW">抛异常（业务线程隔离）</option>
-        <option value="SLOW">慢消费 500ms</option>
-      </select>
-      <button type="submit">创建消费者</button>
-    </form>
-    <div id="consumers"><div class="empty">还没有消费者</div></div>
-  </section>
-
-  <section class="card span-6">
-    <h2>消费者组 / 位点 <span class="hint">组内共享位点 · 在途 · 消费者级 Tag</span></h2>
-    <div id="groups"><div class="empty">还没有消费者组</div></div>
-  </section>
-
-  <section class="card span-6">
-    <h2>Broker 内存消息 <span class="hint">messageMap（已死信的消息会移除）</span></h2>
-    <div id="messages"><div class="empty">暂无消息</div></div>
-  </section>
-
-  <section class="card span-7">
-    <h2>死信队列 <span class="hint">可重放回原消费组</span></h2>
-    <div id="dlq"><div class="empty">暂无死信</div></div>
-  </section>
-
-  <section class="card span-5">
-    <h2>测试 <span class="hint">一键验证全部能力</span></h2>
-    <div class="row">
-      <button id="selfTestBtn">运行自检（4 个场景）</button>
-      <button id="mavenTestBtn" class="ghost">运行 Maven 测试</button>
-      <button id="cancelMavenBtn" class="ghost small" title="终止 Maven 进程">终止</button>
+  <!-- ============================================================ 发送 -->
+  <section class="card span-5" id="sendCard">
+    <div class="card-head">
+      <h2>发送消息</h2>
+      <span class="badge-soft">P_SEND_MSG</span>
     </div>
-    <div id="selfTest"></div>
-    <pre class="log" id="mavenLog">尚未运行 Maven 测试</pre>
+    <p class="desc">
+      把消息发给 Broker。Broker 落盘后立即返回 <code>P_CONFIRM_MSG</code>；
+      消息是否被消费成功由消费者的 ACK 单独决定。
+    </p>
+    <form id="sendForm" autocomplete="off">
+      <div class="field">
+        <label for="sendTopic">Topic <span class="req">必填</span></label>
+        <input id="sendTopic" name="topic" list="topicOptions" value="DEMO_TOPIC" placeholder="例如 DEMO_TOPIC">
+        <p class="hint">消息分类，消费者按 Topic 订阅。</p>
+      </div>
+      <div class="field">
+        <label for="sendTag">Tag <span class="opt">可选</span></label>
+        <input id="sendTag" name="tag" value="TAG1" placeholder="例如 TAG1 / PAY / ORDER">
+        <p class="hint">二级过滤，消费者可用 <code>*</code> 订阅全部。</p>
+      </div>
+      <div class="field full">
+        <label for="sendPayload">消息内容 <span class="opt">Payload</span></label>
+        <textarea id="sendPayload" name="payload" rows="4">{"orderId":"A1001","amount":99.5,"status":"CREATED"}</textarea>
+        <div class="examples">
+          <span class="hint">填入示例：</span>
+          <button type="button" class="chip" data-example="order">订单 JSON</button>
+          <button type="button" class="chip" data-example="text">纯文本</button>
+          <button type="button" class="chip" data-example="large">1KB 长消息</button>
+        </div>
+      </div>
+      <label class="checkbox">
+        <input type="checkbox" name="enduring" checked>
+        持久化（enduring）：写入消息日志，Broker 重启后可恢复；取消勾选可演示非持久化消息。
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="primary">发送消息</button>
+        <span class="hint">⌘ / Ctrl + Enter 快速发送</span>
+      </div>
+    </form>
+    <div id="sendResult" class="result-box hidden"></div>
+  </section>
+
+  <!-- ============================================================ 消费者 -->
+  <section class="card span-7" id="consumerCard">
+    <div class="card-head">
+      <h2>消费者</h2>
+      <span class="badge-soft">joinGroup → groupSubscribe</span>
+    </div>
+    <p class="desc">
+      每个消费者都是真实 TCP 客户端。同一组内共享位点（负载均衡），不同组各自收到全量消息；
+      Tag 是消费者级的，同组可以订阅不同 Tag。
+    </p>
+    <form id="consumerForm" autocomplete="off">
+      <div class="field">
+        <label for="cGroup">消费组 <span class="req">必填</span></label>
+        <input id="cGroup" name="group" value="DEMO_GROUP" placeholder="例如 ORDER_GROUP">
+        <p class="hint">相同组名的消费者分摊消息。</p>
+      </div>
+      <div class="field">
+        <label for="cTopic">Topic <span class="req">必填</span></label>
+        <input id="cTopic" name="topic" list="topicOptions" value="DEMO_TOPIC" placeholder="例如 DEMO_TOPIC">
+        <p class="hint">要订阅的主题。</p>
+      </div>
+      <div class="field">
+        <label for="cTags">Tags <span class="opt">默认 *</span></label>
+        <input id="cTags" name="tags" value="*" placeholder="* 或 TAG_A,TAG_B">
+        <p class="hint">逗号分隔；<code>*</code> 表示全部。</p>
+      </div>
+      <div class="field">
+        <label for="cMode">业务行为</label>
+        <select id="cMode" name="mode">
+          <option value="SUCCESS">正常消费</option>
+          <option value="FAIL">一直失败（ACK_FAIL）</option>
+          <option value="FAIL_ONCE">首次失败（观察重投）</option>
+          <option value="REJECT_RETRY">拒绝并重试（死信链路）</option>
+          <option value="THROW">抛异常（验证线程隔离）</option>
+          <option value="SLOW">慢消费 500ms</option>
+        </select>
+        <p class="hint" id="modeHint"></p>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="primary">创建消费者</button>
+        <span class="hint">创建后立即订阅并开始接收消息</span>
+      </div>
+    </form>
+    <datalist id="topicOptions"></datalist>
+    <div id="consumers" style="margin-top:14px;"></div>
+  </section>
+
+  <!-- ============================================================ 分组 -->
+  <section class="card span-6" id="groupsCard">
+    <div class="card-head">
+      <h2>消费者组 / 位点</h2>
+      <span class="badge-soft">offset · in-flight · tags</span>
+    </div>
+    <p class="desc">
+      组位点是"组内已确认到哪条消息"的水位线；在途表示已推送但还没 ACK。点击行查看消费者与 Tag 详情。
+    </p>
+    <div id="groups"></div>
+  </section>
+
+  <!-- ============================================================ 消息 -->
+  <section class="card span-6" id="messagesCard">
+    <div class="card-head">
+      <h2>Broker 内存消息</h2>
+      <span class="badge-soft">messageMap</span>
+    </div>
+    <p class="desc">最近的消息，按 ID 倒序。点击任意一行查看完整内容；已进入死信的消息会从内存移除。</p>
+    <div class="filter-row">
+      <input id="msgFilter" class="filter" placeholder="按 Topic / Tag / 内容过滤…" autocomplete="off">
+      <span class="count" id="msgCount"></span>
+    </div>
+    <div id="messages"></div>
+  </section>
+
+  <!-- ============================================================ 死信 -->
+  <section class="card span-7" id="dlqCard">
+    <div class="card-head">
+      <h2>死信队列</h2>
+      <span class="badge-soft">重放回原组</span>
+    </div>
+    <p class="desc">投递次数耗尽或业务主动拒绝后的消息。点击行查看详情，或直接点「重放」重新投递给原消费组。</p>
+    <div class="filter-row">
+      <input id="dlqFilter" class="filter" placeholder="按原因 / Topic / 内容过滤…" autocomplete="off">
+      <span class="count" id="dlqCount"></span>
+    </div>
+    <div id="dlq"></div>
+  </section>
+
+  <!-- ============================================================ 测试 -->
+  <section class="card span-5" id="testCard">
+    <div class="card-head">
+      <h2>测试</h2>
+      <span class="badge-soft">一键验证</span>
+    </div>
+    <p class="desc">自检直接跑在运行中的 Broker 上；Maven 测试在仓库根目录执行，日志实时回显。</p>
+
+    <div class="test-block">
+      <h3>端到端自检</h3>
+      <p class="desc">4 个场景：发送→消费→ACK→位点 · ACK_FAIL 重投 · Tag 隔离 · 死信重放，约 1~2 秒。</p>
+      <div class="row" style="display:flex;gap:8px;align-items:center;">
+        <button class="primary small" id="selfTestBtn">运行自检</button>
+        <span class="badge idle" id="selfTestBadge">IDLE</span>
+        <span class="hint" id="selfTestMeta"></span>
+      </div>
+      <div id="selfTest"></div>
+    </div>
+
+    <div class="test-block" style="margin-bottom:0;">
+      <h3>Maven 测试</h3>
+      <p class="desc">执行 <code>whisper-console.maven-command</code>（默认 <code>mvn -o test</code>），当前 27 个单元测试。</p>
+      <div class="row" style="display:flex;gap:8px;align-items:center;">
+        <button class="ghost small" id="mavenTestBtn">运行 Maven 测试</button>
+        <button class="danger small" id="cancelMavenBtn" disabled>终止</button>
+        <span class="badge idle" id="mavenBadge">IDLE</span>
+        <span class="hint" id="mavenMeta"></span>
+      </div>
+      <pre class="log" id="mavenLog"></pre>
+    </div>
   </section>
 </main>
 
+<!-- ============================================================== 弹窗 -->
+<div class="modal-backdrop hidden" id="modalBackdrop">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-head">
+      <h3 id="modalTitle">详情</h3>
+      <button class="ghost small" id="modalClose">关闭</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
 <script>
 (() => {
+  'use strict';
+
+  // ------------------------------------------------------------------ 工具
   const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
+  const shortId = (id) => {
+    const s = String(id ?? '');
+    return s.length <= 12 ? s : s.slice(0, 6) + '…' + s.slice(-4);
+  };
+  const fmtTime = (ts) => {
+    if (!ts) return '-';
+    const d = new Date(Number(ts));
+    return d.toLocaleTimeString('zh-CN', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+  };
+  const fmtDayTime = (ts) => ts ? new Date(Number(ts)).toLocaleString('zh-CN', { hour12: false }) : '-';
 
   async function api(path, options = {}) {
     const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
@@ -216,258 +595,666 @@
     return data;
   }
 
-  let online = false;
+  function toast(message, type = 'info', timeout = 3200) {
+    const el = document.createElement('div');
+    el.className = 'toast ' + type;
+    el.textContent = message;
+    $('#toasts').appendChild(el);
+    setTimeout(() => el.remove(), timeout);
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('已复制到剪贴板', 'ok');
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); toast('已复制到剪贴板', 'ok'); }
+      catch { toast('复制失败，请手动选择', 'bad'); }
+      ta.remove();
+    }
+  }
+
+  function scrollToCard(selector) {
+    const target = $(selector);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    target.classList.remove('flash');
+    void target.offsetWidth;
+    target.classList.add('flash');
+    setTimeout(() => target.classList.remove('flash'), 1600);
+  }
+
+  // ------------------------------------------------------------------ 弹窗
+  let modalCloseHandler = null;
+  function openModal(title, bodyHtml) {
+    $('#modalTitle').innerHTML = title;
+    $('#modalBody').innerHTML = bodyHtml;
+    $('#modalBackdrop').classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeModal() {
+    $('#modalBackdrop').classList.add('hidden');
+    $('#modalBody').innerHTML = '';
+    document.body.style.overflow = '';
+    if (modalCloseHandler) { modalCloseHandler(); modalCloseHandler = null; }
+  }
+  $('#modalClose').addEventListener('click', closeModal);
+  $('#modalBackdrop').addEventListener('click', (e) => {
+    if (e.target === $('#modalBackdrop')) closeModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#modalBackdrop').classList.contains('hidden')) closeModal();
+  });
+
+  // ------------------------------------------------------------------ 状态
+  let lastOverview = null;
+  let lastSelf = null;
+  let lastMaven = null;
   let consumersSig = '';
   let groupsSig = '';
   let messagesSig = '';
   let dlqSig = '';
+  let online = false;
 
-  // ---------------------------------------------------------------- 顶部状态
-  function renderStats(broker, config) {
-    const stats = [
-      ['Broker', `${broker.host}:${broker.port}`, true],
-      ['消息', broker.messages],
-      ['在途', broker.inFlight],
-      ['组', broker.groups],
-      ['在线消费者', broker.onlineConsumers],
-      ['死信', broker.deadLetters],
-      ['ACK 超时', config.ackTimeoutMillis + 'ms'],
-      ['最大投递', config.maxDeliveryAttempts],
-    ];
-    $('#stats').innerHTML = stats.map(([name, value, dot]) =>
-      `<span class="stat">${dot ? '<span class="dot on"></span>' : ''}${esc(name)}<b>${esc(value)}</b></span>`
-    ).join('');
+  const MODE_LABEL = {
+    SUCCESS: '正常消费', FAIL: '一直失败', FAIL_ONCE: '首次失败',
+    REJECT_RETRY: '拒绝重试', THROW: '抛异常', SLOW: '慢消费'
+  };
+
+  const MODE_INFO = {
+    SUCCESS: '正常消费并 ACK，消息会被确认。',
+    FAIL: '监听器返回失败 → 发送 ACK_FAIL → Broker 立即重投，超过最大投递次数后进入死信。',
+    FAIL_ONCE: '第一次投递失败触发重投，第二次成功，用于观察 ACK_FAIL 重投。',
+    REJECT_RETRY: '调用 reject() 走死信重试计数，达到上限后进入死信队列。',
+    THROW: '监听器抛异常，验证异常被业务线程池隔离，不影响其他消息与心跳。',
+    SLOW: '睡眠 500ms，验证慢消费不会阻塞 Netty IO 线程。'
+  };
+
+  // ------------------------------------------------------------------ 顶栏
+  function updateStats(data) {
+    const broker = data.broker;
+    const groups = data.groups || [];
+    const consumers = data.consumers || [];
+    const dlq = data.deadLetters || [];
+    const messages = data.recentMessages || [];
+    const topics = data.topics || [];
+
+    setText('messages', broker.messages);
+    setText('inFlight', broker.inFlight);
+    setText('groups', broker.groups);
+    setText('online', broker.onlineConsumers);
+    setText('deadLetters', broker.deadLetters);
+    setText('topics', topics.length);
+    setText('config', formatConfigShort(data.config));
+
+    $('#stats [data-stat="deadLetters"]').classList.toggle('has-alert', broker.deadLetters > 0);
+    $('#stats [data-stat="inFlight"]').classList.toggle('has-alert', broker.inFlight > 0);
+
+    setHtml('messagesPreview', messages.length
+      ? messages.slice(0, 4).map(m => tipItem(m.topic, (m.tag ? '[' + m.tag + '] ' : '') + m.payload)).join('')
+      : tipEmpty('暂无消息'));
+    setHtml('inFlightPreview', broker.inFlight
+      ? groups.filter(g => g.inFlight > 0).map(g => tipItem(g.groupId, g.inFlight + ' 条未确认')).join('')
+      : tipEmpty('没有在途消息'));
+    setHtml('groupsPreview', groups.length
+      ? groups.slice(0, 5).map(g => tipItem(g.groupId, g.onlineConsumers + ' 个在线消费者')).join('')
+      : tipEmpty('还没有消费者组'));
+    setHtml('onlinePreview', consumers.length
+      ? consumers.slice(0, 5).map(c => tipItem(c.id, c.groupId + ' / ' + c.topic)).join('')
+      : tipEmpty('还没有在线消费者'));
+    setHtml('deadLettersPreview', dlq.length
+      ? dlq.slice(0, 4).map(d => tipItem(d.deadType || '-', (d.topic || '?') + ' · ' + (d.payload || ''))).join('')
+      : tipEmpty('暂无死信'));
+    setHtml('topicsPreview', topics.length
+      ? topics.slice(0, 6).map(t => tipItem(t.topic, t.messages + ' 条消息')).join('')
+      : tipEmpty('暂无主题'));
+    setHtml('configPreview', [
+      tipItem('ACK 超时', data.config.ackTimeoutMillis + ' ms'),
+      tipItem('最大投递次数', data.config.maxDeliveryAttempts + ' 次'),
+      tipItem('死信重试', data.config.maxDeadLetterRetryCount + ' 次'),
+      tipItem('订阅确认超时', data.config.subscribeTimeoutMillis + ' ms'),
+      tipItem('新组回溯', data.config.newGroupStartFromEarliest ? '从最早消息开始' : '从最新消息开始')
+    ].join(''));
+
+    $('#topicOptions').innerHTML = topics
+      .map(t => `<option value="${esc(t.topic)}"></option>`).join('');
   }
 
-  function renderOffline() {
-    $('#stats').innerHTML = '<span class="stat"><span class="dot off"></span>Broker 未连接</span>';
+  function setText(field, value) {
+    const el = $(`[data-field="${field}"]`);
+    if (el) el.textContent = value;
+  }
+  function setHtml(field, html) {
+    const el = $(`[data-field="${field}"]`);
+    if (el) el.innerHTML = html;
+  }
+  function tipItem(k, v) {
+    return `<div class="tip-item"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`;
+  }
+  function tipEmpty(text) {
+    return `<div class="tip-empty">${esc(text)}</div>`;
+  }
+  function formatConfigShort(config) {
+    if (!config) return '-';
+    const sec = (config.ackTimeoutMillis / 1000).toFixed(config.ackTimeoutMillis % 1000 ? 1 : 0);
+    return sec + 's / ' + config.maxDeliveryAttempts + ' 次';
   }
 
-  // ---------------------------------------------------------------- 消费者
+  // ------------------------------------------------------------------ 消费者
+  function consumerModeOptions(current) {
+    return Object.keys(MODE_INFO)
+      .map(m => `<option value="${m}" ${m === current ? 'selected' : ''}>${MODE_LABEL[m] || m}</option>`)
+      .join('');
+  }
+
   function renderConsumers(list) {
-    const sig = JSON.stringify(list.map(c => [c.id, c.mode, c.received, c.success, c.failed, c.recent[0]?.messageId]));
+    const sig = JSON.stringify(list.map(c => [c.id, c.mode, c.received, c.success, c.failed, c.lastThread, c.recent[0]?.messageId]));
     if (sig === consumersSig) return;
     consumersSig = sig;
 
     if (!list.length) {
-      $('#consumers').innerHTML = '<div class="empty">还没有消费者</div>';
+      $('#consumers').innerHTML = `<div class="empty">
+        还没有消费者。在上方填写组名和 Topic 后点击<b>创建消费者</b>，
+        或点 <button class="link" data-goto="#sendCard">先去发送一条消息</button>。
+      </div>`;
       return;
     }
-    const modes = ['SUCCESS', 'FAIL', 'FAIL_ONCE', 'REJECT_RETRY', 'THROW', 'SLOW'];
     $('#consumers').innerHTML = list.map(c => `
-      <div class="session">
-        <div class="session-head">
+      <div class="consumer">
+        <div class="consumer-head">
+          <span class="dot ${c.failed > 0 ? '' : 'on'}"></span>
           <b>${esc(c.id)}</b>
-          <span class="pill">${esc(c.groupId)}</span>
-          <span class="pill">${esc(c.topic)}</span>
-          <span class="pill tags">${esc(c.tags.join(', '))}</span>
-          <select data-mode="${esc(c.id)}" title="业务行为">
-            ${modes.map(m => `<option value="${m}" ${m === c.mode ? 'selected' : ''}>${m}</option>`).join('')}
-          </select>
+          <span class="tag">${esc(c.groupId)}</span>
+          <span class="tag">${esc(c.topic)}</span>
+          <span class="tag tags">${esc((c.tags || []).join(', '))}</span>
+          <span class="spacer"></span>
+          <select data-mode="${esc(c.id)}" title="切换业务行为">${consumerModeOptions(c.mode)}</select>
+          <button class="ghost small" data-consumer-detail="${esc(c.id)}">详情</button>
           <button class="danger small" data-close="${esc(c.id)}">停止</button>
         </div>
-        <div class="counters">
-          收到 <b>${c.received}</b> · 成功 <b>${c.success}</b> · 失败 <b>${c.failed}</b>
-          · 线程 <code>${esc(c.lastThread || '-')}</code>
-          ${c.lastError ? ' · <span style="color:var(--bad)">' + esc(c.lastError) + '</span>' : ''}
+        <div class="metrics">
+          <span>收到 <b>${c.received}</b></span>
+          <span>成功 <b>${c.success}</b></span>
+          <span>失败 <b>${c.failed}</b></span>
+          <span>线程 <span class="thread">${esc(c.lastThread || '-')}</span></span>
         </div>
-        ${c.recent.length ? `<ul class="mini">${c.recent.slice(0, 3).map(m =>
-          `<li>${esc(m.topic)} / ${esc(m.tag || '-')} · ${esc(m.payload)}</li>`).join('')}</ul>` : ''}
-      </div>
-    `).join('');
+        ${(c.recent && c.recent.length) ? `<div class="recent">${c.recent.slice(0, 3).map(m => `
+          <div class="recent-item" data-msg="${esc(m.messageId)}" title="点击查看消息详情">
+            <span class="time">${fmtTime(m.at)}</span>
+            <span>${esc(m.topic)}${m.tag ? ' [' + esc(m.tag) + ']' : ''} · ${esc(m.payload)}</span>
+          </div>`).join('')}</div>` : ''}
+      </div>`).join('');
   }
 
-  // ---------------------------------------------------------------- 分组
+  function matchText(obj, filter) {
+    return [obj.topic, obj.tag, obj.payload, obj.groupId, obj.deadType, obj.messageId]
+      .filter(Boolean).join(' ').toLowerCase().includes(filter);
+  }
+
+  // ------------------------------------------------------------------ 分组
   function renderGroups(groups) {
     const sig = JSON.stringify(groups);
     if (sig === groupsSig) return;
     groupsSig = sig;
 
     if (!groups.length) {
-      $('#groups').innerHTML = '<div class="empty">还没有消费者组</div>';
+      $('#groups').innerHTML = `<div class="empty">
+        还没有消费者组。创建消费者后自动出现；组内共享位点，点击行可查看详情。
+      </div>`;
       return;
     }
-    $('#groups').innerHTML = `<table>
-      <thead><tr><th>组</th><th>在线 / 在途</th><th>订阅</th><th>位点</th><th>消费者级 Tag</th></tr></thead>
+    $('#groups').innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>组</th><th>在线 / 在途</th><th>订阅</th><th>位点</th></tr></thead>
       <tbody>${groups.map(g => `
-        <tr>
+        <tr class="clickable" data-group="${esc(g.groupId)}" title="点击查看详情">
           <td class="mono">${esc(g.groupId)}</td>
           <td>${g.onlineConsumers} / ${g.inFlight}</td>
-          <td class="mono">${esc(g.subscriptions.join(', ') || '-')}</td>
-          <td class="mono">${Object.entries(g.offsets).map(([t, o]) => `${esc(t)}=${esc(o)}`).join('<br>') || '-'}</td>
-          <td class="mono">${Object.entries(g.tags).flatMap(([t, cs]) =>
-            Object.entries(cs).map(([cid, tags]) => `${esc(t)}:${esc(cid.slice(-6))}→${esc([].concat(tags).join('|'))}`)
-          ).join('<br>') || '-'}</td>
+          <td>${(g.subscriptions || []).map(s => `<span class="tag">${esc(s)}</span>`).join(' ') || '-'}</td>
+          <td class="mono">${Object.entries(g.offsets || {}).map(([t, o]) => `${esc(t)}=${esc(shortId(o))}`).join('<br>') || '-'}</td>
         </tr>`).join('')}</tbody>
-    </table>`;
+    </table></div>`;
   }
 
-  // ---------------------------------------------------------------- 消息 / 死信
+  // ------------------------------------------------------------------ 消息
   function renderMessages(messages) {
-    const sig = JSON.stringify(messages.map(m => m.messageId));
+    const filter = ($('#msgFilter')?.value || '').trim().toLowerCase();
+    const filtered = filter ? messages.filter(m => matchText(m, filter)) : messages;
+    const sig = JSON.stringify([filter, filtered.map(m => m.messageId)]);
     if (sig === messagesSig) return;
     messagesSig = sig;
+    $('#msgCount').textContent = `显示 ${filtered.length} / ${messages.length} 条`;
 
-    if (!messages.length) {
-      $('#messages').innerHTML = '<div class="empty">暂无消息</div>';
+    if (!filtered.length) {
+      $('#messages').innerHTML = messages.length
+        ? `<div class="empty">没有匹配「${esc(filter)}」的消息。</div>`
+        : `<div class="empty">
+        还没有消息，Broker 的 messageMap 是空的。
+        <button class="link" data-goto="#sendCard">去发送一条</button>
+      </div>`;
       return;
     }
-    $('#messages').innerHTML = `<table>
-      <thead><tr><th>消息 ID</th><th>Topic</th><th>Tag</th><th>Payload</th></tr></thead>
-      <tbody>${messages.map(m => `
-        <tr>
-          <td class="mono">${esc(String(m.messageId).slice(-10))}</td>
-          <td class="mono">${esc(m.topic)}</td>
-          <td>${esc(m.tag || '-')}</td>
+    $('#messages').innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>消息 ID</th><th>Topic / Tag</th><th>内容</th></tr></thead>
+      <tbody>${filtered.map(m => `
+        <tr class="clickable" data-msg="${esc(m.messageId)}" title="点击查看完整内容">
+          <td class="mono">${esc(shortId(m.messageId))}</td>
+          <td>${esc(m.topic)}<span class="sub">${esc(m.tag || '无 Tag')} · ${m.enduring ? '持久化' : '非持久化'}</span></td>
           <td class="trunc" title="${esc(m.payload)}">${esc(m.payload)}</td>
         </tr>`).join('')}</tbody>
-    </table>`;
+    </table></div>`;
   }
 
-  function renderDlq(deadLetters) {
-    const sig = JSON.stringify(deadLetters.map(d => d.id));
+  // ------------------------------------------------------------------ 死信
+  function renderDlq(list) {
+    const filter = ($('#dlqFilter')?.value || '').trim().toLowerCase();
+    const filtered = filter ? list.filter(d => matchText(d, filter)) : list;
+    const sig = JSON.stringify([filter, filtered.map(d => d.id)]);
     if (sig === dlqSig) return;
     dlqSig = sig;
+    $('#dlqCount').textContent = `显示 ${filtered.length} / ${list.length} 条`;
 
-    if (!deadLetters.length) {
-      $('#dlq').innerHTML = '<div class="empty">暂无死信</div>';
+    if (!filtered.length) {
+      $('#dlq').innerHTML = list.length
+        ? `<div class="empty">没有匹配「${esc(filter)}」的死信。</div>`
+        : `<div class="empty">
+        暂无死信。把消费者行为设为「一直失败」再发送一条消息，超过最大投递次数后就会进入这里。
+      </div>`;
       return;
     }
-    $('#dlq').innerHTML = `<table>
-      <thead><tr><th>死信 ID</th><th>原因</th><th>原消息</th><th>Topic / Payload</th><th></th></tr></thead>
-      <tbody>${deadLetters.map(d => `
-        <tr>
-          <td class="mono">${esc(String(d.id).slice(-10))}</td>
-          <td><span class="badge bad">${esc(d.deadType || '-')}</span><br><span class="hint">重试 ${esc(d.retryCount)}</span></td>
-          <td class="mono">${esc(String(d.messageId || '').slice(-10))}<br><span class="hint">${esc(d.groupId || '')}</span></td>
+    $('#dlq').innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>死信</th><th>原因</th><th>Topic / 内容</th><th>操作</th></tr></thead>
+      <tbody>${filtered.map(d => `
+        <tr class="clickable" data-dlq="${esc(d.id)}" title="点击查看详情">
+          <td class="mono">${esc(shortId(d.id))}<span class="sub">原消息 ${esc(shortId(d.messageId))}</span></td>
+          <td><span class="badge bad">${esc(d.deadType || '-')}</span><span class="sub">重试 ${esc(d.retryCount)} 次 · ${esc(d.groupId || '')}</span></td>
           <td class="trunc" title="${esc(d.payload)}">${esc(d.topic || '?')} · ${esc(d.payload)}</td>
-          <td><button class="small" data-replay="${esc(d.id)}">重放</button></td>
+          <td><button class="primary small" data-replay="${esc(d.id)}">重放</button></td>
         </tr>`).join('')}</tbody>
-    </table>`;
+    </table></div>`;
   }
 
-  // ---------------------------------------------------------------- 测试状态
+  // ------------------------------------------------------------------ 测试状态
+  let selfSig = '';
   function renderSelfTest(state) {
+    lastSelf = state;
     const status = state.status || 'IDLE';
-    const badge = status === 'RUNNING' ? 'run' : (status === 'PASSED' ? 'ok' : (status === 'FAILED' ? 'bad' : ''));
+    const badge = $('#selfTestBadge');
+    badge.className = 'badge ' + (status === 'RUNNING' ? 'run' : status === 'PASSED' ? 'ok' : status === 'FAILED' ? 'bad' : 'idle');
+    badge.textContent = status;
+    $('#selfTestMeta').textContent = (status === 'IDLE')
+      ? ''
+      : `通过 ${state.passed ?? 0} · 失败 ${state.failed ?? 0} · ${state.durationMillis ?? 0}ms`;
+    $('#selfTestBtn').disabled = status === 'RUNNING';
+    $('#selfTestTopBtn').disabled = status === 'RUNNING';
+
+    const sig = JSON.stringify([status, state.passed, state.failed,
+      (state.steps || []).length, (state.logs || []).length]);
+    if (sig === selfSig) return;
+    selfSig = sig;
+
     const steps = (state.steps || []).map(s => `
       <li class="${s.ok ? 'ok' : 'bad'}">
-        <span class="icon">${s.ok ? '✓' : '✗'}</span>${esc(s.name)}
-        <span class="detail">${esc(s.detail)}</span>
+        <span class="icon">${s.ok ? '✓' : '✗'}</span>
+        <span>${esc(s.name)}<span class="detail">${esc(s.detail)}</span></span>
       </li>`).join('');
     const logs = (state.logs || []).join('\n');
-    $('#selfTest').innerHTML = `
-      <div class="row" style="margin-top:10px;">
-        <span class="badge ${badge}">${esc(status)}</span>
-        <span class="hint">通过 ${state.passed ?? 0} · 失败 ${state.failed ?? 0}
-          ${state.durationMillis ? '· ' + state.durationMillis + 'ms' : ''}</span>
-      </div>
-      ${steps ? `<ul class="steps">${steps}</ul>` : ''}
-      ${logs ? `<pre class="log">${esc(logs)}</pre>` : ''}`;
-    $('#selfTestBtn').disabled = status === 'RUNNING';
+    $('#selfTest').innerHTML = steps
+      ? `<ul class="steps">${steps}</ul>${logs ? `<details><summary>查看运行日志</summary><pre class="log">${esc(logs)}</pre></details>` : ''}`
+      : '';
   }
 
+  let mavenSig = '';
   function renderMavenTest(state) {
+    lastMaven = state;
     const status = state.status || 'IDLE';
     const running = status === 'RUNNING';
+    const badge = $('#mavenBadge');
+    badge.className = 'badge ' + (running ? 'run' : status === 'PASSED' ? 'ok' : status === 'FAILED' ? 'bad' : 'idle');
+    badge.textContent = status;
     $('#mavenTestBtn').disabled = running;
+    $('#mavenTopBtn').disabled = running;
     $('#cancelMavenBtn').disabled = !running;
-    const lines = state.lines || [];
-    const text = lines.slice(-260).join('\n');
-    const head = running
+    $('#mavenMeta').textContent = running
       ? `运行中… ${state.command || ''}`
-      : (status === 'IDLE' ? '尚未运行 Maven 测试'
-        : `${status} · exit=${state.exitCode} · ${state.durationMillis}ms`);
+      : (status === 'IDLE' ? '' : `exit=${state.exitCode} · ${state.durationMillis}ms`);
+
+    const lines = state.lines || [];
+    const sig = JSON.stringify([status, state.exitCode, lines.length]);
+    if (sig === mavenSig) return;
+    mavenSig = sig;
+    const text = lines.slice(-240).join('\n');
     const pre = $('#mavenLog');
-    const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
-    pre.textContent = head + '\n' + text;
+    const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 40;
+    pre.textContent = text || (running ? '正在启动…' : '');
     if (running && atBottom) pre.scrollTop = pre.scrollHeight;
   }
 
-  // ---------------------------------------------------------------- 加载
-  async function loadOverview() {
+  // ------------------------------------------------------------------ 详情
+  async function openMessageDetail(messageId) {
     try {
-      const data = await api('/api/overview');
-      online = true;
-      renderStats(data.broker, data.config);
-      renderGroups(data.groups);
-      renderConsumers(data.consumers);
-      renderMessages(data.recentMessages);
-      renderDlq(data.deadLetters);
+      const d = await api('/api/messages/' + encodeURIComponent(messageId));
+      const statusBadge = d.status === 'DEAD_LETTER'
+        ? '<span class="badge bad">已进入死信</span>'
+        : '<span class="badge ok">在 Broker 内存</span>';
+      openModal('消息详情 ' + statusBadge, `
+        <dl class="detail">
+          <dt>消息 ID</dt>
+          <dd class="mono">${esc(d.messageId)} <button class="chip" data-copy="${esc(d.messageId)}">复制</button></dd>
+          <dt>Topic</dt><dd>${esc(d.topic)}</dd>
+          <dt>Tag</dt><dd>${esc(d.tag || '（无）')}</dd>
+          <dt>业务 Key</dt><dd>${esc(d.bizKey || '（无）')}</dd>
+          <dt>持久化</dt><dd>${d.enduring ? '是' : '否'}</dd>
+          <dt>内容长度</dt><dd>${d.payloadLength} 字符</dd>
+          <dt>内容</dt><dd><pre class="code">${esc(d.payload)}</pre></dd>
+          ${d.status === 'DEAD_LETTER' ? `
+            <dt>死信原因</dt><dd><span class="badge bad">${esc(d.deadType)}</span>（重试 ${esc(d.retryCount)} 次）</dd>
+            <dt>死信 ID</dt><dd class="mono">${esc(d.id)}</dd>` : ''}
+        </dl>
+        ${d.status === 'DEAD_LETTER' ? `<div class="modal-actions">
+          <button class="primary" data-replay="${esc(d.id)}">重放到原消费组</button>
+        </div>` : ''}`);
     } catch (e) {
-      if (online) { console.warn(e); }
-      online = false;
-      renderOffline();
+      toast('无法查看消息：' + e.message, 'bad');
     }
   }
 
-  async function loadTests() {
+  async function openDeadLetterDetail(id) {
     try {
-      renderSelfTest(await api('/api/test/self'));
-      renderMavenTest(await api('/api/test/maven'));
-    } catch (e) { /* 忽略轮询错误 */ }
+      const d = await api('/api/deadletters/' + encodeURIComponent(id));
+      openModal('死信详情 <span class="badge bad">' + esc(d.deadType || '-') + '</span>', `
+        <dl class="detail">
+          <dt>死信 ID</dt><dd class="mono">${esc(d.id)} <button class="chip" data-copy="${esc(d.id)}">复制</button></dd>
+          <dt>原消息 ID</dt><dd class="mono">${esc(d.messageId)}</dd>
+          <dt>原消费组</dt><dd>${esc(d.groupId || '-')}</dd>
+          <dt>Topic / Tag</dt><dd>${esc(d.topic || '-')} / ${esc(d.tag || '-')}</dd>
+          <dt>产生时间</dt><dd>${esc(d.deadTime || '-')}</dd>
+          <dt>重试次数</dt><dd>${esc(d.retryCount)}</dd>
+          <dt>内容</dt><dd><pre class="code">${esc(d.payload)}</pre></dd>
+        </dl>
+        <div class="modal-actions">
+          <button class="primary" data-replay="${esc(d.id)}">重放到原消费组</button>
+        </div>`);
+    } catch (e) {
+      toast('无法查看死信：' + e.message, 'bad');
+    }
   }
 
-  async function refreshAll() {
-    await Promise.all([loadOverview(), loadTests()]);
+  function openGroupDetail(groupId) {
+    const group = (lastOverview?.groups || []).find(g => g.groupId === groupId);
+    if (!group) return;
+    const tagRows = Object.entries(group.tags || {}).flatMap(([topic, consumers]) =>
+      Object.entries(consumers).map(([cid, tags]) =>
+        `<div class="tip-item"><span class="k">${esc(topic)}</span><span class="v">${esc(shortId(cid))} → ${esc([].concat(tags).join(', '))}</span></div>`
+      )).join('') || '<div class="tip-empty">暂无消费者级 Tag</div>';
+    openModal('消费组 ' + esc(groupId), `
+      <dl class="detail">
+        <dt>组 ID</dt><dd class="mono">${esc(group.groupId)}</dd>
+        <dt>在线消费者</dt><dd>${group.onlineConsumers}</dd>
+        <dt>在途消息</dt><dd>${group.inFlight}</dd>
+        <dt>订阅主题</dt><dd class="kv">${(group.subscriptions || []).map(s => `<span class="tag">${esc(s)}</span>`).join('') || '-'}</dd>
+        <dt>组位点</dt><dd>${Object.entries(group.offsets || {}).map(([t, o]) =>
+          `<div class="mono">${esc(t)} → ${esc(o)}</div>`).join('') || '-'}</dd>
+        <dt>消费者级 Tag</dt><dd>${tagRows}</dd>
+      </dl>`);
   }
 
-  // ---------------------------------------------------------------- 事件
+  function openConsumerDetail(id) {
+    const c = (lastOverview?.consumers || []).find(x => x.id === id);
+    if (!c) return;
+    openModal('消费者 ' + esc(id), `
+      <dl class="detail">
+        <dt>消费组</dt><dd>${esc(c.groupId)}</dd>
+        <dt>Topic</dt><dd>${esc(c.topic)}</dd>
+        <dt>Tags</dt><dd>${esc((c.tags || []).join(', '))}</dd>
+        <dt>业务行为</dt><dd>${esc(c.mode)} — ${esc(MODE_INFO[c.mode] || '')}</dd>
+        <dt>统计</dt><dd>收到 ${c.received} · 成功 ${c.success} · 失败 ${c.failed}</dd>
+        <dt>业务线程</dt><dd class="mono">${esc(c.lastThread || '-')}</dd>
+        <dt>启动时间</dt><dd>${esc(fmtDayTime(c.startedAt))}</dd>
+      </dl>
+      <h4 style="margin:16px 0 6px;font-size:13px;">最近收到的消息</h4>
+      ${(c.recent && c.recent.length)
+        ? `<div class="table-wrap"><table><thead><tr><th>时间</th><th>Topic / Tag</th><th>内容</th></tr></thead><tbody>
+            ${c.recent.map(m => `<tr class="clickable" data-msg="${esc(m.messageId)}">
+              <td class="mono">${fmtTime(m.at)}</td>
+              <td>${esc(m.topic)}<span class="sub">${esc(m.tag || '无 Tag')}</span></td>
+              <td class="trunc" title="${esc(m.payload)}">${esc(m.payload)}</td>
+            </tr>`).join('')}
+          </tbody></table></div>`
+        : '<div class="empty">还没有收到消息</div>'}`);
+  }
+
+  function openHelp() {
+    openModal('使用说明', `
+      <h4 style="margin-top:0;">这是什么？</h4>
+      <p class="desc">WhisperMQ 是一个轻量级消息队列。这个页面进程内嵌了 Broker（9999），
+      页面上的生产者/消费者都是真实 TCP 客户端，操作与外部接入完全一致。</p>
+
+      <h4>核心概念</h4>
+      <dl class="detail">
+        <dt>Topic</dt><dd>消息分类，消费者按 Topic 订阅。</dd>
+        <dt>Tag</dt><dd>二级过滤；消费者可用 <code>*</code> 或逗号分隔的 Tag 列表，且是消费者级配置。</dd>
+        <dt>消费组</dt><dd>同组消费者分摊消息（共享位点）；不同组各自收到全量消息。</dd>
+        <dt>位点</dt><dd>组内"已确认到哪条消息"的水位线，只在 ACK_SUCCESS 时前进。</dd>
+        <dt>在途</dt><dd>已投递给消费者但还没收到 ACK 的消息；超时会重新投递。</dd>
+        <dt>死信</dt><dd>投递次数耗尽或被业务拒绝的消息，可以在页面上一键重放。</dd>
+      </dl>
+
+      <h4>建议体验顺序</h4>
+      <ol style="margin:0;padding-left:20px;font-size:12.5px;line-height:1.9;">
+        <li>创建消费者（组 <code>DEMO_GROUP</code>、Topic <code>DEMO_TOPIC</code>、Tags <code>*</code>）。</li>
+        <li>发送一条消息，观察消费者卡片里的"收到/成功"和组位点变化。</li>
+        <li>把消费者行为改成「一直失败」，再发一条，观察死信队列出现并重放。</li>
+        <li>点「运行自检」，一次性验证投递、重投、Tag 隔离、死信重放。</li>
+      </ol>
+
+      <h4 style="margin-top:16px;">注意</h4>
+      <ul style="margin:0;padding-left:20px;font-size:12.5px;line-height:1.9;">
+        <li>控制台数据目录：<code>./WhisperMQ-console-data</code>（可直接删除以重置）。</li>
+        <li>端口：页面 8080，Broker 9999；修改 <code>WhisperMQ-console/src/main/resources/application.properties</code>。</li>
+        <li>「运行 Maven 测试」需要本机 <code>mvn</code> 在 PATH 中。</li>
+      </ul>`);
+  }
+
+  // ------------------------------------------------------------------ 动作
+  function showSendResult(result) {
+    const box = $('#sendResult');
+    box.classList.remove('hidden', 'ok', 'bad');
+    box.classList.add(result.ok ? 'ok' : 'bad');
+    box.innerHTML = result.ok
+      ? `<div class="result-row">
+           <span class="badge ok">发送成功</span>
+           <span>消息 ID：<code>${esc(result.messageId)}</code></span>
+           <button class="chip" data-copy="${esc(result.messageId)}">复制</button>
+           <button class="chip" data-msg="${esc(result.messageId)}">查看详情</button>
+         </div>
+         <p class="hint" style="margin-top:6px;">Broker 已确认接收（P_CONFIRM_MSG）；消费者是否处理成功由 ACK 决定。</p>`
+      : `<div class="result-row">
+           <span class="badge bad">发送失败</span>
+           <span>${esc(result.message || result.error || '未知错误')}</span>
+         </div>`;
+  }
+
+  async function sendMessage(values) {
+    const body = {
+      topic: values.topic,
+      tag: values.tag,
+      payload: values.payload,
+      enduring: values.enduring
+    };
+    const result = await api('/api/messages', { method: 'POST', body: JSON.stringify(body) });
+    showSendResult(result);
+    if (result.ok) toast('消息已发送', 'ok');
+    else toast('发送失败：' + (result.message || ''), 'bad');
+    await loadOverview();
+    return result;
+  }
+
+  async function quickStart() {
+    try {
+      const hasConsumer = (lastOverview?.consumers || []).some(
+        c => c.groupId === 'DEMO_GROUP' && c.topic === 'DEMO_TOPIC');
+      if (!hasConsumer) {
+        await api('/api/consumers', {
+          method: 'POST',
+          body: JSON.stringify({ group: 'DEMO_GROUP', topic: 'DEMO_TOPIC', tags: ['*'], mode: 'SUCCESS' })
+        });
+        toast('已创建演示消费者（DEMO_GROUP）', 'ok');
+      }
+      await sendMessage({
+        topic: 'DEMO_TOPIC',
+        tag: 'TAG1',
+        payload: '来自一键体验的消息 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+        enduring: true
+      });
+      await refreshAll();
+      scrollToCard('#consumerCard');
+    } catch (e) {
+      toast('一键体验失败：' + e.message, 'bad');
+    }
+  }
+
   $('#sendForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = new FormData(event.target);
-    const button = event.target.querySelector('button');
+    const button = event.target.querySelector('button[type="submit"]');
     button.disabled = true;
     try {
-      const result = await api('/api/messages', {
-        method: 'POST',
-        body: JSON.stringify({
-          topic: form.get('topic'),
-          tag: form.get('tag'),
-          payload: form.get('payload'),
-          enduring: form.get('enduring') === 'on'
-        })
+      await sendMessage({
+        topic: String(form.get('topic') || '').trim(),
+        tag: String(form.get('tag') || '').trim(),
+        payload: form.get('payload'),
+        enduring: form.get('enduring') === 'on'
       });
-      $('#sendResult').textContent = JSON.stringify(result, null, 2);
-      await loadOverview();
     } catch (e) {
-      $('#sendResult').textContent = '发送失败：' + e.message;
+      toast('发送失败：' + e.message, 'bad');
     } finally {
       button.disabled = false;
     }
+  });
+
+  $('#sendPayload').addEventListener('keydown', (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      $('#sendForm').requestSubmit();
+    }
+  });
+
+  $$('[data-example]').forEach(button => {
+    button.addEventListener('click', () => {
+      const type = button.dataset.example;
+      const payload = $('#sendPayload');
+      if (type === 'order') {
+        payload.value = JSON.stringify({ orderId: 'A1001', amount: 99.5, status: 'CREATED' }, null, 2);
+      } else if (type === 'text') {
+        payload.value = '用户下单成功：订单 A1001，金额 99.5';
+      } else if (type === 'large') {
+        payload.value = 'LONG-MESSAGE:' + 'x'.repeat(1024);
+      }
+      payload.focus();
+    });
+  });
+
+  $('#modeHint').textContent = MODE_INFO.SUCCESS;
+  $('#cMode').addEventListener('change', (event) => {
+    $('#modeHint').textContent = MODE_INFO[event.target.value] || '';
   });
 
   $('#consumerForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = new FormData(event.target);
     const tags = String(form.get('tags') || '*').split(',').map(t => t.trim()).filter(Boolean);
-    const button = event.target.querySelector('button');
+    const button = event.target.querySelector('button[type="submit"]');
     button.disabled = true;
     try {
       await api('/api/consumers', {
         method: 'POST',
         body: JSON.stringify({
-          group: form.get('group'),
-          topic: form.get('topic'),
+          group: String(form.get('group') || '').trim(),
+          topic: String(form.get('topic') || '').trim(),
           tags,
           mode: form.get('mode')
         })
       });
+      toast('消费者已创建并开始订阅', 'ok');
       await loadOverview();
     } catch (e) {
-      alert('创建消费者失败：' + e.message);
+      toast('创建消费者失败：' + e.message, 'bad');
     } finally {
       button.disabled = false;
     }
   });
 
-  $('#consumers').addEventListener('click', async (event) => {
-    const id = event.target.dataset.close;
-    if (!id) return;
-    try {
-      await api('/api/consumers/' + encodeURIComponent(id), { method: 'DELETE' });
-      await loadOverview();
-    } catch (e) { alert('停止失败：' + e.message); }
+  // ------------------------------------------------------------------ 事件委托
+  document.addEventListener('click', async (event) => {
+    const el = event.target.closest('[data-goto], [data-copy], [data-msg], [data-dlq], [data-group], [data-consumer-detail], [data-close], [data-replay]');
+    if (!el) return;
+
+    if (el.dataset.goto) {
+      event.preventDefault();
+      scrollToCard(el.dataset.goto);
+      return;
+    }
+    if (el.dataset.copy) {
+      event.preventDefault();
+      await copyText(el.dataset.copy);
+      return;
+    }
+    if (el.dataset.msg) {
+      event.preventDefault();
+      await openMessageDetail(el.dataset.msg);
+      return;
+    }
+    if (el.dataset.dlq) {
+      event.preventDefault();
+      await openDeadLetterDetail(el.dataset.dlq);
+      return;
+    }
+    if (el.dataset.group) {
+      event.preventDefault();
+      openGroupDetail(el.dataset.group);
+      return;
+    }
+    if (el.dataset.consumerDetail) {
+      event.preventDefault();
+      openConsumerDetail(el.dataset.consumerDetail);
+      return;
+    }
+    if (el.dataset.close) {
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        await api('/api/consumers/' + encodeURIComponent(el.dataset.close), { method: 'DELETE' });
+        toast('消费者已停止', 'ok');
+        consumersSig = '';
+        await loadOverview();
+      } catch (e) {
+        toast('停止失败：' + e.message, 'bad');
+      }
+      return;
+    }
+    if (el.dataset.replay) {
+      event.preventDefault();
+      event.stopPropagation();
+      el.disabled = true;
+      try {
+        const result = await api('/api/deadletters/' + encodeURIComponent(el.dataset.replay) + '/replay', { method: 'POST' });
+        if (result.ok) {
+          toast('已重放，消息会重新投递给原消费组', 'ok');
+          dlqSig = '';
+          closeModal();
+          await loadOverview();
+        } else {
+          toast('重放失败：' + (result.error || '未知错误'), 'bad');
+        }
+      } catch (e) {
+        toast('重放失败：' + e.message, 'bad');
+      } finally {
+        el.disabled = false;
+      }
+    }
   });
 
   $('#consumers').addEventListener('change', async (event) => {
@@ -478,55 +1265,99 @@
         method: 'PATCH',
         body: JSON.stringify({ mode: event.target.value })
       });
+      toast('业务行为已切换为 ' + event.target.value, 'ok');
       consumersSig = '';
       await loadOverview();
-    } catch (e) { alert('切换模式失败：' + e.message); }
-  });
-
-  $('#dlq').addEventListener('click', async (event) => {
-    const id = event.target.dataset.replay;
-    if (!id) return;
-    event.target.disabled = true;
-    try {
-      const result = await api('/api/deadletters/' + encodeURIComponent(id) + '/replay', { method: 'POST' });
-      if (!result.ok) alert('重放失败：' + (result.error || 'unknown'));
-      dlqSig = '';
-      await loadOverview();
     } catch (e) {
-      alert('重放失败：' + e.message);
-    } finally {
-      event.target.disabled = false;
+      toast('切换失败：' + e.message, 'bad');
     }
   });
 
-  $('#selfTestBtn').addEventListener('click', async () => {
+  $('#selfTestBtn').addEventListener('click', () => runSelfTest());
+  $('#selfTestTopBtn').addEventListener('click', () => runSelfTest(true));
+  $('#mavenTestBtn').addEventListener('click', () => runMavenTest());
+  $('#mavenTopBtn').addEventListener('click', () => runMavenTest(true));
+
+  async function runSelfTest(scroll = false) {
     try {
       await api('/api/test/self', { method: 'POST' });
-      await loadTests();
-    } catch (e) { alert('启动自检失败：' + e.message); }
-  });
+      if (scroll) scrollToCard('#testCard');
+      toast('自检已启动', 'ok');
+      setTimeout(loadTests, 300);
+    } catch (e) {
+      toast('启动自检失败：' + e.message, 'bad');
+    }
+  }
 
-  $('#mavenTestBtn').addEventListener('click', async () => {
+  async function runMavenTest(scroll = false) {
     try {
       await api('/api/test/maven', { method: 'POST' });
-      await loadTests();
-    } catch (e) { alert('启动 Maven 测试失败：' + e.message); }
-  });
+      if (scroll) scrollToCard('#testCard');
+      toast('Maven 测试已启动（在仓库根目录执行）', 'ok');
+      setTimeout(loadTests, 300);
+    } catch (e) {
+      toast('启动 Maven 测试失败：' + e.message, 'bad');
+    }
+  }
 
   $('#cancelMavenBtn').addEventListener('click', async () => {
     try {
       await api('/api/test/maven/cancel', { method: 'POST' });
+      toast('已请求终止', 'ok');
       await loadTests();
-    } catch (e) { alert('终止失败：' + e.message); }
+    } catch (e) {
+      toast('终止失败：' + e.message, 'bad');
+    }
   });
 
-  $('#refreshBtn').addEventListener('click', refreshAll);
+  $('#msgFilter').addEventListener('input', () => {
+    messagesSig = '';
+    if (lastOverview) renderMessages(lastOverview.recentMessages);
+  });
+  $('#dlqFilter').addEventListener('input', () => {
+    dlqSig = '';
+    if (lastOverview) renderDlq(lastOverview.deadLetters);
+  });
 
-  // 每 2 秒轮询；测试运行中每秒刷新一次日志
-  let tick = 0;
+  $('#helpBtn').addEventListener('click', openHelp);
+  $('#quickStartBtn').addEventListener('click', quickStart);
+  $('#refreshBtn').addEventListener('click', () => {
+    refreshAll();
+    toast('已刷新', 'ok', 1200);
+  });
+
+  // ------------------------------------------------------------------ 轮询
+  async function loadOverview() {
+    try {
+      const data = await api('/api/overview');
+      lastOverview = data;
+      online = true;
+      updateStats(data);
+      renderGroups(data.groups);
+      renderConsumers(data.consumers);
+      renderMessages(data.recentMessages);
+      renderDlq(data.deadLetters);
+    } catch (e) {
+      if (online) console.warn(e);
+      online = false;
+      $$('#stats .stat-value').forEach(el => { el.textContent = '-'; });
+    }
+  }
+
+  async function loadTests() {
+    try {
+      renderSelfTest(await api('/api/test/self'));
+      renderMavenTest(await api('/api/test/maven'));
+    } catch (e) { /* 轮询失败忽略 */ }
+  }
+
+  async function refreshAll() {
+    await Promise.all([loadOverview(), loadTests()]);
+  }
+
   refreshAll();
   setInterval(() => {
-    tick++;
+    if (document.hidden) return;
     loadOverview();
     loadTests();
   }, 2000);
