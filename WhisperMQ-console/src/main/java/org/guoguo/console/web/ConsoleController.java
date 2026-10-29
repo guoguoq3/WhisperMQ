@@ -41,6 +41,9 @@ public class ConsoleController {
     public record SendRequest(String topic, String tag, String payload, Boolean enduring, String bizKey) {
     }
 
+    public record BatchSendRequest(String topic, String tag, Integer count, Integer payloadSize) {
+    }
+
     public record ConsumerRequest(String group, String topic, List<String> tags, String mode) {
     }
 
@@ -71,6 +74,14 @@ public class ConsoleController {
     public Map<String, Object> send(@RequestBody SendRequest request) {
         return console.send(request.topic(), request.tag(), request.payload(),
                 request.enduring(), request.bizKey());
+    }
+
+    /** 批量发送（压测/演示）：返回条数、耗时与吞吐 */
+    @PostMapping("/messages/batch")
+    public Map<String, Object> batchSend(@RequestBody BatchSendRequest request) {
+        int count = request.count() == null ? 100 : request.count();
+        int payloadSize = request.payloadSize() == null ? 256 : request.payloadSize();
+        return console.batchSend(request.topic(), request.tag(), count, payloadSize);
     }
 
     /** 消息详情（完整 payload）；内存里没有时会到死信队列里按原消息 ID 查找 */

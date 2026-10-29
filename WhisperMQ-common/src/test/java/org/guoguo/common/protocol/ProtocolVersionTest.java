@@ -36,6 +36,17 @@ class ProtocolVersionTest {
     }
 
     @Test
+    void tokenRoundTrips() {
+        RpcMessageDTO dto = new RpcMessageDTO();
+        dto.setToken("secret-token");
+
+        RpcMessageDTO back = JSON.parseObject(JSON.toJSONString(dto), RpcMessageDTO.class);
+
+        assertEquals("secret-token", back.getToken());
+        assertTrue(JSON.toJSONString(dto).contains("\"token\""));
+    }
+
+    @Test
     void unknownFutureFieldsAreIgnored() {
         RpcMessageDTO dto = JSON.parseObject(
                 "{\"version\":1,\"request\":false,\"methodType\":\"X\",\"json\":\"{}\","

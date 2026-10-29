@@ -105,6 +105,28 @@ class SegmentMessageStoreTest {
     }
 
     @Test
+    void replayAcrossSegmentsIsOrdered() {
+        MqConfigProperties config = config();
+        config.setMaxFileSize(512);
+        SegmentMessageStore store = new SegmentMessageStore(config);
+        store.init();
+        try {
+            for (int i = 1; i <= 20; i++) {
+                store.append(String.valueOf(1000 + i), message("T", "payload-" + i + "-" + "x".repeat(80)));
+            }
+            assertTrue(((Number) store.stats().get("segments")).intValue() > 1, "应跨多个 segment");
+
+            List<String> ids = new ArrayList<>();
+            store.forEachTopicAfter("T", null, stored -> ids.add(stored.messageId()));
+            assertEquals(20, ids.size());
+            assertEquals("1001", ids.get(0));
+            assertEquals("1020", ids.get(19));
+        } finally {
+            store.close();
+        }
+    }
+
+    @Test
     void retentionDeletesOnlyOldSegments() throws Exception {
         MqConfigProperties config = config();
         config.setRetentionMillis(1);

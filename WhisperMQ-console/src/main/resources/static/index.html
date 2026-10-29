@@ -358,6 +358,22 @@
         <div class="tip-footer">来自消息与订阅关系</div>
       </div>
     </div>
+    <div class="stat" data-stat="paused" tabindex="0">
+      <span class="stat-label">暂停</span><span class="stat-value" data-field="paused">-</span>
+      <div class="tip">
+        <div class="tip-title">背压暂停中的消费者</div>
+        <div data-field="pausedPreview"></div>
+        <div class="tip-footer">业务队列满时暂停投递，回落后自动恢复</div>
+      </div>
+    </div>
+    <div class="stat" data-stat="segments" tabindex="0">
+      <span class="stat-label">存储段</span><span class="stat-value" data-field="segments">-</span>
+      <div class="tip">
+        <div class="tip-title">消息存储（分段 + 索引）</div>
+        <div data-field="segmentsPreview"></div>
+        <div class="tip-footer">启动只加载索引，消息体按需读取</div>
+      </div>
+    </div>
     <div class="stat" data-stat="config" tabindex="0">
       <span class="stat-label">可靠性</span><span class="stat-value" data-field="config">-</span>
       <div class="tip">
@@ -430,6 +446,23 @@
       </div>
     </form>
     <div id="sendResult" class="result-box hidden"></div>
+    <div style="border-top:1px solid var(--line);margin:14px 0;"></div>
+    <div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <strong style="font-size:13px;">批量压测</strong>
+        <span class="hint">串行发送，统计吞吐（会真实写入存储）</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:8px;">
+        <label class="hint" style="display:flex;flex-direction:column;gap:4px;">条数
+          <input id="batchCount" type="number" min="1" max="20000" value="500" style="width:96px;">
+        </label>
+        <label class="hint" style="display:flex;flex-direction:column;gap:4px;">每条字节
+          <input id="batchSize" type="number" min="1" max="65536" value="256" style="width:110px;">
+        </label>
+        <button type="button" class="ghost small" id="batchBtn">开始批量发送</button>
+      </div>
+      <div id="batchResult" class="hint" style="margin-top:6px;"></div>
+    </div>
   </section>
 
   <!-- ============================================================ 消费者 -->
@@ -690,6 +723,19 @@
     setText('deadLetters', broker.deadLetters);
     setText('topics', topics.length);
     setText('config', formatConfigShort(data.config));
+    const store = broker.store || {};
+    setText('paused', broker.paused || 0);
+    setText('segments', store.segments ?? '-');
+    $('#stats [data-stat="paused"]')?.classList.toggle('has-alert', (broker.paused || 0) > 0);
+    setHtml('pausedPreview', (broker.paused || 0) > 0
+      ? tipItem('暂停中', broker.paused + ' 个消费者（背压）')
+      : tipEmpty('没有暂停的消费者'));
+    setHtml('segmentsPreview', [
+      tipItem('分段数', (store.segments ?? 0) + ' 个'),
+      tipItem('存活 / 总量', (store.live ?? 0) + ' / ' + (store.messages ?? 0)),
+      tipItem('占用', fmtBytes(store.bytes || 0)),
+      tipItem('热缓存', (data.broker.hotCacheSize ?? '-') + ' 条')
+    ].join(''));
 
     $('#stats [data-stat="deadLetters"]').classList.toggle('has-alert', broker.deadLetters > 0);
     $('#stats [data-stat="inFlight"]').classList.toggle('has-alert', broker.inFlight > 0);
@@ -722,6 +768,13 @@
 
     $('#topicOptions').innerHTML = topics
       .map(t => `<option value="${esc(t.topic)}"></option>`).join('');
+  }
+
+  function fmtBytes(bytes) {
+    const n = Number(bytes) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(1) + ' MB';
   }
 
   function setText(field, value) {
@@ -842,11 +895,12 @@
       return;
     }
     $('#messages').innerHTML = `<div class="table-wrap"><table>
-      <thead><tr><th>消息 ID</th><th>Topic / Tag</th><th>内容</th></tr></thead>
+      <thead><tr><th>消息 ID</th><th>Topic / Tag</th><th>分区</th><th>内容</th></tr></thead>
       <tbody>${filtered.map(m => `
         <tr class="clickable" data-msg="${esc(m.messageId)}" title="点击查看完整内容">
           <td class="mono">${esc(shortId(m.messageId))}</td>
           <td>${esc(m.topic)}<span class="sub">${esc(m.tag || '无 Tag')} · ${m.enduring ? '持久化' : '非持久化'}</span></td>
+          <td class="mono">P${esc(m.partition ?? 0)}</td>
           <td class="trunc" title="${esc(m.payload)}">${esc(m.payload)}</td>
         </tr>`).join('')}</tbody>
     </table></div>`;
@@ -1059,6 +1113,16 @@
         <li>点「运行自检」，一次性验证投递、重投、Tag 隔离、死信重放。</li>
       </ol>
 
+      <h4 style="margin-top:16px;">存储与可靠性（P1）</h4>
+      <ul style="margin:0;padding-left:20px;font-size:12.5px;line-height:1.9;">
+        <li><b>分段存储</b>：消息写入 segment，索引单独落盘；启动只加载索引，消息体按需读取。</li>
+        <li><b>保留策略</b>：配置 <code>retention-millis</code> / <code>retention-max-bytes</code> 后按整段清理，默认关闭。</li>
+        <li><b>分区</b>：<code>default-partitions</code> &gt; 1 时同一分区的消息固定投给同一消费者；组详情里可看分配表。</li>
+        <li><b>背压</b>：消费者队列满会暂停 Broker 投递，回落后按位点补投，不再依赖超时重投。</li>
+        <li><b>去重</b>：消费端按 messageId 做 LRU 去重（默认 1000 条），重复投递直接 ACK。</li>
+        <li><b>鉴权</b>：<code>auth-enabled</code> + <code>auth-token</code>，默认关闭；TLS 尚未实现。</li>
+      </ul>
+
       <h4 style="margin-top:16px;">注意</h4>
       <ul style="margin:0;padding-left:20px;font-size:12.5px;line-height:1.9;">
         <li>控制台数据目录：<code>./WhisperMQ-console-data</code>（可直接删除以重置）。</li>
@@ -1139,6 +1203,32 @@
       });
     } catch (e) {
       toast('发送失败：' + e.message, 'bad');
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $('#batchBtn').addEventListener('click', async () => {
+    const topic = $('#sendTopic').value.trim();
+    const tag = $('#sendTag').value.trim();
+    const count = Number($('#batchCount').value || 0);
+    const payloadSize = Number($('#batchSize').value || 0);
+    if (!topic) { toast('请先填写 Topic', 'bad'); return; }
+    const button = $('#batchBtn');
+    button.disabled = true;
+    $('#batchResult').textContent = `正在发送 ${count} 条…`;
+    try {
+      const res = await api('/messages/batch', {
+        method: 'POST',
+        body: JSON.stringify({ topic, tag, count, payloadSize })
+      });
+      $('#batchResult').textContent = res.ok
+        ? `已发送 ${res.success} 条 · 耗时 ${res.elapsedMillis} ms · 约 ${res.throughputPerSecond} 条/秒`
+        : `失败：${res.error || 'unknown'}`;
+      toast(res.ok ? '批量发送完成' : '批量发送失败', res.ok ? 'ok' : 'bad');
+      refresh();
+    } catch (e) {
+      $('#batchResult').textContent = '失败：' + e.message;
     } finally {
       button.disabled = false;
     }

@@ -125,6 +125,39 @@ public class ConsoleService {
         return out;
     }
 
+    /**
+     * 批量发送（控制台压测/演示）：串行发送 count 条，返回耗时与吞吐。
+     * payload 为 "{序号}-" + 指定长度的填充串，便于在消息列表里辨认。
+     */
+    public Map<String, Object> batchSend(String topic, String tag, int count, int payloadSize) {
+        if (count < 1 || count > 20000) {
+            throw new IllegalArgumentException("批量条数需在 1~20000 之间");
+        }
+        int size = Math.max(1, Math.min(64 * 1024, payloadSize));
+        String padding = "x".repeat(size);
+        long start = System.currentTimeMillis();
+        int success = 0;
+        String error = null;
+        for (int i = 0; i < count; i++) {
+            Map<String, Object> result = send(topic, tag, i + "-" + padding, true, "batch-" + i);
+            if (Boolean.TRUE.equals(result.get("ok"))) {
+                success++;
+            } else {
+                error = String.valueOf(result.get("error"));
+                break;
+            }
+        }
+        long elapsed = Math.max(1, System.currentTimeMillis() - start);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", success == count);
+        out.put("success", success);
+        out.put("count", count);
+        out.put("elapsedMillis", elapsed);
+        out.put("throughputPerSecond", Math.round(success * 1000.0 / elapsed));
+        out.put("error", error);
+        return out;
+    }
+
     // ------------------------------------------------------------------ 消费者
 
     public ConsumerSession createConsumer(String groupId, String topic, List<String> tags, String mode) {
@@ -220,6 +253,10 @@ public class ConsoleService {
         info.put("messages", brokerManager.getMessageCount());
         info.put("store", brokerManager.getStoreStats());
         info.put("paused", brokerManager.getPausedCount());
+        info.put("protocolVersion", org.guoguo.common.pojo.DTO.RpcMessageDTO.PROTOCOL_VERSION);
+        info.put("authEnabled", config.isAuthEnabled());
+        info.put("hotCacheSize", config.getHotCacheSize());
+        info.put("retentionMillis", config.getRetentionMillis());
         info.put("groups", groupManager.getGroupMap().size());
         info.put("deadLetters", deadLetterQueue.size());
         info.put("inFlight", brokerManager.getInFlightCount());
@@ -350,6 +387,7 @@ public class ConsoleService {
         item.put("bizKey", message.getBizKey());
         item.put("payload", full ? message.getPayload() : truncate(message.getPayload(), 300));
         item.put("payloadLength", message.getPayload() == null ? 0 : message.getPayload().length());
+        item.put("partition", message.getPartition());
         item.put("enduring", !(message instanceof MqMessageEnduring) || ((MqMessageEnduring) message).isEnduring());
         return item;
     }
