@@ -96,11 +96,12 @@
   /* ---------------------------------------------------------------- 布局 */
   main {
     display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px;
-    align-items: start; padding: 16px 28px 48px;
+    align-items: stretch; padding: 16px 28px 48px;
   }
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
     padding: 18px 20px; box-shadow: var(--shadow); min-width: 0; scroll-margin-top: 92px;
+    display: flex; flex-direction: column;
   }
   .card.flash { animation: flash 1.4s ease; }
   @keyframes flash {
@@ -119,6 +120,27 @@
   .span-6 { grid-column: span 6; }
   .span-7 { grid-column: span 7; }
   .span-12 { grid-column: span 12; }
+
+  /* 固定高度滚动区：避免卡片被列表无限拉长 */
+  .table-wrap.scroll { max-height: 344px; overflow: auto; }
+  .table-wrap.scroll thead th { position: sticky; top: 0; z-index: 1; background: #f8fafc; }
+  #consumers { max-height: 352px; overflow: auto; padding-right: 2px; }
+  #groups { max-height: 300px; overflow: auto; }
+  #dlq .table-wrap { max-height: 236px; overflow: auto; }
+  #dlq .table-wrap thead th { position: sticky; top: 0; z-index: 1; background: #f8fafc; }
+
+  /* 工具卡片（自检 / Maven） */
+  .tool-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 0; border-top: 1px solid var(--line);
+  }
+  .tool-row:first-of-type { border-top: none; padding-top: 4px; }
+  .tool-info { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .tool-info strong { font-size: 13px; }
+  .tool-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tool-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .modal-log { max-height: 320px; overflow: auto; }
+  #groups .empty, #dlq .empty { min-height: 148px; display: flex; align-items: center; justify-content: center; }
 
   /* ---------------------------------------------------------------- 表单 */
   form { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -530,7 +552,7 @@
       <h2>Broker 内存消息</h2>
       <span class="badge-soft">messageMap</span>
     </div>
-    <p class="desc">最近的消息，按 ID 倒序。点击任意一行查看完整内容；已进入死信的消息会从内存移除。</p>
+    <p class="desc">最近的消息，按 ID 倒序；列表固定高度、内部滚动。点击任意一行查看完整内容。</p>
     <div class="filter-row">
       <input id="msgFilter" class="filter" placeholder="按 Topic / Tag / 内容过滤…" autocomplete="off">
       <span class="count" id="msgCount"></span>
@@ -544,7 +566,7 @@
       <h2>死信队列</h2>
       <span class="badge-soft">重放回原组</span>
     </div>
-    <p class="desc">投递次数耗尽或业务主动拒绝后的消息。点击行查看详情，或直接点「重放」重新投递给原消费组。</p>
+    <p class="desc">投递次数耗尽或业务主动拒绝后的消息。点击行查看详情，或直接点「重放」重新投递给原消费组；列表可滚动。</p>
     <div class="filter-row">
       <input id="dlqFilter" class="filter" placeholder="按原因 / Topic / 内容过滤…" autocomplete="off">
       <span class="count" id="dlqCount"></span>
@@ -555,32 +577,43 @@
   <!-- ============================================================ 测试 -->
   <section class="card span-5" id="testCard">
     <div class="card-head">
-      <h2>测试</h2>
-      <span class="badge-soft">一键验证</span>
+      <h2>可靠性工具</h2>
+      <span class="badge-soft">自检 · Maven</span>
     </div>
-    <p class="desc">自检直接跑在运行中的 Broker 上；Maven 测试在仓库根目录执行，日志实时回显。</p>
+    <p class="desc">
+      自检直接跑在运行中的 Broker 上；Maven 测试在仓库根目录执行。
+      结果与日志在弹窗中查看，不再占用页面空间。
+    </p>
 
-    <div class="test-block">
-      <h3>端到端自检</h3>
-      <p class="desc">4 个场景：发送→消费→ACK→位点 · ACK_FAIL 重投 · Tag 隔离 · 死信重放，约 1~2 秒。</p>
-      <div class="row" style="display:flex;gap:8px;align-items:center;">
+    <div class="tool-row">
+      <div class="tool-info">
+        <strong>端到端自检</strong>
+        <span class="hint">4 个场景：发送→消费→ACK→位点 · ACK_FAIL 重投 · Tag 隔离 · 死信重放</span>
+        <div class="tool-status">
+          <span class="badge idle" id="selfTestBadge">IDLE</span>
+          <span class="hint" id="selfTestMeta"></span>
+        </div>
+      </div>
+      <div class="tool-actions">
         <button class="primary small" id="selfTestBtn">运行自检</button>
-        <span class="badge idle" id="selfTestBadge">IDLE</span>
-        <span class="hint" id="selfTestMeta"></span>
+        <button class="ghost small" id="selfResultBtn" disabled>查看结果</button>
       </div>
-      <div id="selfTest"></div>
     </div>
 
-    <div class="test-block" style="margin-bottom:0;">
-      <h3>Maven 测试</h3>
-      <p class="desc">执行 <code>whisper-console.maven-command</code>（默认 <code>mvn -o test</code>），当前 27 个单元测试。</p>
-      <div class="row" style="display:flex;gap:8px;align-items:center;">
-        <button class="ghost small" id="mavenTestBtn">运行 Maven 测试</button>
-        <button class="danger small" id="cancelMavenBtn" disabled>终止</button>
-        <span class="badge idle" id="mavenBadge">IDLE</span>
-        <span class="hint" id="mavenMeta"></span>
+    <div class="tool-row">
+      <div class="tool-info">
+        <strong>Maven 测试</strong>
+        <span class="hint">执行 <code>mvn -o test</code>（全量单元测试）</span>
+        <div class="tool-status">
+          <span class="badge idle" id="mavenBadge">IDLE</span>
+          <span class="hint" id="mavenMeta"></span>
+        </div>
       </div>
-      <pre class="log" id="mavenLog"></pre>
+      <div class="tool-actions">
+        <button class="ghost small" id="mavenTestBtn">运行</button>
+        <button class="danger small" id="cancelMavenBtn" disabled>终止</button>
+        <button class="ghost small" id="mavenLogBtn">日志</button>
+      </div>
     </div>
   </section>
 </main>
@@ -894,7 +927,7 @@
       </div>`;
       return;
     }
-    $('#messages').innerHTML = `<div class="table-wrap"><table>
+    $('#messages').innerHTML = `<div class="table-wrap scroll"><table>
       <thead><tr><th>消息 ID</th><th>Topic / Tag</th><th>分区</th><th>内容</th></tr></thead>
       <tbody>${filtered.map(m => `
         <tr class="clickable" data-msg="${esc(m.messageId)}" title="点击查看完整内容">
@@ -938,6 +971,7 @@
   // ------------------------------------------------------------------ 测试状态
   let selfSig = '';
   function renderSelfTest(state) {
+    const previous = lastSelf;
     lastSelf = state;
     const status = state.status || 'IDLE';
     const badge = $('#selfTestBadge');
@@ -948,21 +982,28 @@
       : `通过 ${state.passed ?? 0} · 失败 ${state.failed ?? 0} · ${state.durationMillis ?? 0}ms`;
     $('#selfTestBtn').disabled = status === 'RUNNING';
     $('#selfTestTopBtn').disabled = status === 'RUNNING';
+    $('#selfResultBtn').disabled = !(state.steps && state.steps.length);
 
-    const sig = JSON.stringify([status, state.passed, state.failed,
-      (state.steps || []).length, (state.logs || []).length]);
-    if (sig === selfSig) return;
-    selfSig = sig;
+    // 运行结束自动弹出结果；用户关掉后不再打扰
+    if (previous && previous.status === 'RUNNING' && status !== 'RUNNING') {
+      openSelfResultModal();
+    }
+  }
 
+  function openSelfResultModal() {
+    const state = lastSelf || {};
     const steps = (state.steps || []).map(s => `
       <li class="${s.ok ? 'ok' : 'bad'}">
         <span class="icon">${s.ok ? '✓' : '✗'}</span>
         <span>${esc(s.name)}<span class="detail">${esc(s.detail)}</span></span>
       </li>`).join('');
     const logs = (state.logs || []).join('\n');
-    $('#selfTest').innerHTML = steps
-      ? `<ul class="steps">${steps}</ul>${logs ? `<details><summary>查看运行日志</summary><pre class="log">${esc(logs)}</pre></details>` : ''}`
-      : '';
+    const title = (state.status === 'PASSED' ? '<span class="badge ok">PASSED</span> '
+      : state.status === 'FAILED' ? '<span class="badge bad">FAILED</span> ' : '')
+      + '自检结果';
+    openModal(title, steps
+      ? `<ul class="steps">${steps}</ul>${logs ? `<pre class="log modal-log">${esc(logs)}</pre>` : ''}`
+      : '<div class="empty">还没有运行过自检。点「运行自检」后这里会显示 4 个场景的结果。</div>');
   }
 
   let mavenSig = '';
@@ -984,11 +1025,25 @@
     const sig = JSON.stringify([status, state.exitCode, lines.length]);
     if (sig === mavenSig) return;
     mavenSig = sig;
-    const text = lines.slice(-240).join('\n');
-    const pre = $('#mavenLog');
-    const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 40;
-    pre.textContent = text || (running ? '正在启动…' : '');
-    if (running && atBottom) pre.scrollTop = pre.scrollHeight;
+
+    const pre = $('#mavenModalLog');
+    if (pre) {
+      const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 40;
+      pre.textContent = lines.slice(-240).join('\n') || (running ? '正在启动…' : '');
+      if (running && atBottom) pre.scrollTop = pre.scrollHeight;
+    }
+  }
+
+  function openMavenLogModal() {
+    const state = lastMaven || {};
+    const lines = (state.lines || []).slice(-240).join('\n');
+    const status = state.status || 'IDLE';
+    openModal('Maven 测试日志', `
+      <div class="hint" style="margin-bottom:8px;">
+        ${esc(state.command || 'mvn -o test')} · ${esc(status)}
+        ${state.exitCode != null ? ' · exit=' + esc(state.exitCode) : ''}
+      </div>
+      <pre class="log modal-log" id="mavenModalLog">${esc(lines || (status === 'RUNNING' ? '正在启动…' : '还没有运行过 Maven 测试。'))}</pre>`);
   }
 
   // ------------------------------------------------------------------ 详情
@@ -1372,6 +1427,8 @@
   });
 
   $('#selfTestBtn').addEventListener('click', () => runSelfTest());
+  $('#selfResultBtn').addEventListener('click', openSelfResultModal);
+  $('#mavenLogBtn').addEventListener('click', openMavenLogModal);
   $('#selfTestTopBtn').addEventListener('click', () => runSelfTest(true));
   $('#mavenTestBtn').addEventListener('click', () => runMavenTest());
   $('#mavenTopBtn').addEventListener('click', () => runMavenTest(true));
@@ -1391,6 +1448,7 @@
     try {
       await api('/api/test/maven', { method: 'POST' });
       if (scroll) scrollToCard('#testCard');
+      openMavenLogModal();
       toast('Maven 测试已启动（在仓库根目录执行）', 'ok');
       setTimeout(loadTests, 300);
     } catch (e) {
