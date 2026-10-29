@@ -41,6 +41,9 @@ java -jar WhisperMQ-console/target/WhisperMQ-console-1.0-SNAPSHOT.jar
 想体验分区与再均衡，可以按 2 分区启动：`java -jar ... --whisper-mq.default-partitions=2`，
 然后在同一消费组创建两个消费者——它们会各自接管一个分区（控制台「消费者组」详情里能看到分配表）。
 
+> 完整的能力边界、性能实测、适用场景与使用指南见
+> [`docs/capabilities.md`](docs/capabilities.md)。
+
 ## 控制台能做什么
 
 - **发送消息**：topic、tag、payload、是否持久化（enduring），带示例内容一键填入
@@ -52,8 +55,10 @@ java -jar WhisperMQ-console/target/WhisperMQ-console-1.0-SNAPSHOT.jar
 - **Broker 内存消息**：最近的 `messageMap` 内容，支持按 Topic / Tag / 内容过滤，点击行查看完整 payload
 - **死信队列**：查看、过滤并一键**重放**回原消费组；点击行查看死信详情与原始 JSON
 - **一键自检**：4 个端到端场景（发送→消费→ACK→位点、ACK_FAIL 重投、Tag 隔离、死信重放）
+- **批量压测**：按条数/字节数发送并统计吞吐
 - **一键 Maven 测试**：在仓库根目录执行 `mvn -o test`，日志实时回显、可终止
-- 右上角「使用说明」内置概念解释与建议体验顺序
+- 顶栏展示暂停数、存储段数；消费者卡片展示队列水位与去重命中
+- 右上角「使用说明」内置概念解释、存储/背压/去重/鉴权说明与建议体验顺序
 
 页面上的所有数据通过 `GET /api/overview` 每 2 秒轮询刷新。
 
@@ -74,13 +79,26 @@ java -jar WhisperMQ-console/target/WhisperMQ-console-1.0-SNAPSHOT.jar
 | POST/GET | `/api/test/maven` | 启动 / 查询 Maven 测试 |
 | POST | `/api/test/maven/cancel` | 终止 Maven 测试 |
 
+## 性能（本机实测）
+
+2000 条 256B 持久化消息、单机单分区、同步发送：
+
+| 指标 | 结果 |
+|---|---|
+| 生产者吞吐 | ≈ 2 370 条/秒 |
+| `send` P50 / P99 | 0.372 ms / 1.190 ms |
+| 端到端消费吞吐 | ≈ 2 360 条/秒 |
+
+复现：`mvn -o -pl WhisperMQ-consumer -am test -Dtest=BenchmarkIT -DfailIfNoTests=false`。
+未开启 fsync，进程崩溃可恢复、机器断电可能丢最近数据；详见能力文档。
+
 ## 测试
 
 ```bash
-# 单元测试（27 个）
+# 单元测试（56 个）
 mvn -o test
 
-# 端到端集成测试（自己拉起一个 Broker，监听 19999）
+# 端到端集成测试（11 个场景，自己拉起一个 Broker，监听 19999）
 mvn -o -pl WhisperMQ-consumer -am test -Dtest=SmokeIT -DfailIfNoTests=false
 ```
 
