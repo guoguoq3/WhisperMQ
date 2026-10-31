@@ -104,6 +104,10 @@ public class MqConfigProperties {
     private long shutdownDrainMillis = 3000;
     /** 批量发送单次最大消息数（P1） */
     private int maxBatchSize = 1000;
+    /** 消费端批量 ACK 条数（0=关闭批量，逐条 ACK） */
+    private int ackBatchSize = 50;
+    /** 批量 ACK 最长攒批时间（毫秒） */
+    private long ackFlushIntervalMillis = 200;
 
     //消费端业务线程池 / 控制请求确认（P1）
     /** 消费者业务线程数（0 = 按 CPU 核数自动，默认：0） */

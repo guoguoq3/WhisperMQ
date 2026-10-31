@@ -191,6 +191,23 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
                     brokerManager.handleConsumerAck(ackReq, consumerId);
                     break;
 
+                // 批量 ACK：逐条摘除在途、推进对应分区位点（P1）
+                case MethodType.C_ACK_BATCH:
+                    ConsumerAckBatchReqDTO ackBatch =
+                            JSON.parseObject(rpcDto.getJson(), ConsumerAckBatchReqDTO.class);
+                    if (ackBatch != null && ackBatch.getAcks() != null) {
+                        for (ConsumerAckReqDTO ack : ackBatch.getAcks()) {
+                            if (ack == null) {
+                                continue;
+                            }
+                            if (ack.getGroupId() == null) {
+                                ack.setGroupId(ackBatch.getGroupId());
+                            }
+                            brokerManager.handleConsumerAck(ack, consumerId);
+                        }
+                    }
+                    break;
+
                 case MethodType.C_DEAD_MSG:
                     DeadLetterDTO deadLetter = JSON.parseObject(rpcDto.getJson(), DeadLetterDTO.class);
                     log.info("Broker 收到死信消息：{}", deadLetter.getMessageId());

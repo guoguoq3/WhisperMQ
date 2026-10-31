@@ -15,6 +15,8 @@ public class MethodType {
     public static final String B_CONTROL_RESPONSE = "B_CONTROL_RESPONSE";
     // 消费者发送消费确认
     public static final String C_ACK_MSG = "C_ACK_MSG";
+    // 消费者批量确认（P1）
+    public static final String C_ACK_BATCH = "C_ACK_BATCH";
     // 组订阅主题
     public static final String GROUP_SUBSCRIBE = "GROUP_SUBSCRIBE";
     // 组取消订阅

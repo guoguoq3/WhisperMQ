@@ -261,11 +261,16 @@ public abstract class MqConsumer implements IMqConsumer {
         }
     }
 
+    /** 关闭前钩子：子类可在此刷新未发送的 ACK 等 */
+    protected void onBeforeClose() {
+    }
+
     @PreDestroy
     public void close() {
         closed = true;
         // 先让业务线程把已接收的消息处理完（期间仍可发送 ACK），再断连接
         dispatcher.close();
+        onBeforeClose();
         reconnectScheduler.shutdownNow();
         if (channel != null) {
             channel.close();

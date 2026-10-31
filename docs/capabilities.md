@@ -19,6 +19,7 @@ WhisperMQ 是一个**单机、轻量、可嵌入**的 Java 消息队列：Netty 
 | 消费组 | 同组共享位点；不同组各自收到全量消息 |
 | 投递语义 | **at-least-once**：ACK_SUCCESS 才推进位点；超时/失败/掉线重投 |
 | 批量生产 | `P_SEND_BATCH`：一条 RPC 多条消息，100 条/批实测约 10k msg/s |
+| 批量 ACK | `C_ACK_BATCH`：成功 ACK 攒批发送（默认 50 条/200ms） |
 | ACK 模式 | 监听器返回 `true/false`；也可 `reject()` 直接走死信重试链路 |
 | 死信队列 | 投递次数耗尽或业务拒绝后入 DLQ，控制台/协议可重放 |
 | 持久化 | segment（`.log`）+ 索引（`.idx`），重启恢复；非持久化消息只走内存 |
@@ -285,6 +286,8 @@ consumer.groupSubscribe(subscribe, (message, messageId) -> {
 | `whisper-mq.store-flush-interval-millis` | 1000 | INTERVAL 模式的 force 间隔 |
 | `whisper-mq.shutdown-drain-millis` | 3000 | 优雅停机等待在途消息的时间 |
 | `whisper-mq.max-batch-size` | 1000 | 单次批量发送的最大消息数 |
+| `whisper-mq.ack-batch-size` | 50 | 消费端批量 ACK 条数（0=逐条） |
+| `whisper-mq.ack-flush-interval-millis` | 200 | 批量 ACK 最长攒批时间 |
 | `whisper-mq.hot-cache-size` | 1000 | 内存热消息条数（0=不缓存消息体） |
 | `whisper-mq.retention-millis` | 0 | 保留时长，0=不清理 |
 | `whisper-mq.retention-max-bytes` | 0 | 容量上限，0=不限 |

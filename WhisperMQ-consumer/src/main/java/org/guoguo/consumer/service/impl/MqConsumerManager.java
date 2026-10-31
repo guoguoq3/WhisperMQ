@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.constant.DeadType;
 import org.guoguo.common.constant.MethodType;
+import org.guoguo.common.pojo.DTO.ConsumerAckBatchReqDTO;
 import org.guoguo.common.pojo.DTO.ConsumerAckReqDTO;
 import org.guoguo.common.pojo.DTO.ConsumerFlowControlDTO;
 import org.guoguo.common.pojo.DTO.DeadLetterDTO;
@@ -54,6 +55,10 @@ public class MqConsumerManager extends MqConsumer {
     // 背压状态：已向 Broker 申请暂停投递，直到队列回落
     private volatile boolean paused = false;
     private volatile long pausedUntil = 0;
+    // 批量 ACK：成功消息先入队，按条数/定时批量发送（P1）
+    private final java.util.concurrent.ConcurrentLinkedQueue<ConsumerAckReqDTO> pendingAcks =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private final java.util.concurrent.ScheduledExecutorService ackFlushScheduler;
 
     // 仅注入配置，调用父类构造（父类已处理配置依赖）
     @Autowired
@@ -62,6 +67,18 @@ public class MqConsumerManager extends MqConsumer {
         this.dedupCache = config.isDedupEnabled() && config.getDedupCacheSize() > 0
                 ? new org.guoguo.consumer.dispatch.DedupCache(config.getDedupCacheSize())
                 : null;
+        if (config.getAckBatchSize() > 0) {
+            long interval = Math.max(50, config.getAckFlushIntervalMillis());
+            this.ackFlushScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread thread = new Thread(r, "mq-ack-flush");
+                thread.setDaemon(true);
+                return thread;
+            });
+            this.ackFlushScheduler.scheduleAtFixedRate(this::flushAcks,
+                    interval, interval, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } else {
+            this.ackFlushScheduler = null;
+        }
     }
 
     // ------------------------------------------------------------------ 入组 / 退组
@@ -180,9 +197,10 @@ public class MqConsumerManager extends MqConsumer {
      */
     @Override
     protected void onReconnected() {
-        // 重连后 Broker 侧是新连接，旧的暂停状态已随断开清除
+        // 重连后 Broker 侧是新连接，旧的暂停状态与未发送 ACK 都随断开失效
         paused = false;
         pausedUntil = 0;
+        pendingAcks.clear();
         if (currentGroupId == null) {
             log.info("WhisperMQ 消费者重连完成，尚未入组，无需恢复");
             return;
@@ -337,15 +355,61 @@ public class MqConsumerManager extends MqConsumer {
             return;
         }
 
+        // 成功 ACK 攒批；失败必须先刷掉已攒的成功 ACK，避免位点越过失败消息
+        if (ACK_SUCCESS.equals(ackStatus) && config.getAckBatchSize() > 0) {
+            pendingAcks.add(ackRequest(messageId, ackStatus, partition));
+            if (pendingAcks.size() >= config.getAckBatchSize()) {
+                flushAcks();
+            }
+            return;
+        }
+        flushAcks();
+        sendFrame(buildRpc(MethodType.C_ACK_MSG, ackRequest(messageId, ackStatus, partition)));
+        log.debug("WhisperMQ 消费者向组{}发送ACK：消息{}（分区{}），状态{}",
+                currentGroupId, messageId, partition, ackStatus);
+    }
+
+    /** 把已攒的成功 ACK 合并成一条 C_ACK_BATCH 发出 */
+    public void flushAcks() {
+        if (pendingAcks.isEmpty()) {
+            return;
+        }
+        if (currentGroupId == null || channel == null || !channel.isActive()) {
+            pendingAcks.clear();
+            return;
+        }
+        int limit = Math.max(1, config.getAckBatchSize() * 2);
+        java.util.List<ConsumerAckReqDTO> batch = new java.util.ArrayList<>(limit);
+        ConsumerAckReqDTO ack;
+        while (batch.size() < limit && (ack = pendingAcks.poll()) != null) {
+            batch.add(ack);
+        }
+        if (batch.isEmpty()) {
+            return;
+        }
+        ConsumerAckBatchReqDTO request = new ConsumerAckBatchReqDTO();
+        request.setMessageId(java.util.UUID.randomUUID().toString());
+        request.setGroupId(currentGroupId);
+        request.setAcks(batch);
+        sendFrame(buildRpc(MethodType.C_ACK_BATCH, request));
+        log.debug("WhisperMQ 消费者批量发送 {} 条 ACK（组{}）", batch.size(), currentGroupId);
+    }
+
+    private ConsumerAckReqDTO ackRequest(String messageId, String ackStatus, int partition) {
         ConsumerAckReqDTO ackReq = new ConsumerAckReqDTO();
         ackReq.setMessageId(messageId);
         ackReq.setGroupId(currentGroupId);
         ackReq.setAckStatus(ackStatus);
         ackReq.setPartition(Math.max(0, partition));
+        return ackReq;
+    }
 
-        sendFrame(buildRpc(MethodType.C_ACK_MSG, ackReq));
-        log.debug("WhisperMQ 消费者向组{}发送ACK：消息{}（分区{}），状态{}",
-                currentGroupId, messageId, partition, ackStatus);
+    @Override
+    protected void onBeforeClose() {
+        flushAcks();
+        if (ackFlushScheduler != null) {
+            ackFlushScheduler.shutdownNow();
+        }
     }
 
     // ------------------------------------------------------------------ 死信

@@ -111,7 +111,7 @@ mvn -o -pl WhisperMQ-consumer -am test -Dtest=SmokeIT -DfailIfNoTests=false
   `heartbeat-interval-millis`、`reconnect-*-millis`、`subscribe-timeout-millis`、
   `default-partitions`、`hot-cache-size`、`retention-millis`、`retention-max-bytes`、
   `max-file-size`、`flush-mode`、`store-flush-interval-millis`、`shutdown-drain-millis`、
-  `backpressure-*`、`dedup-*`、`auth-*` 等）。
+  `backpressure-*`、`dedup-*`、`auth-*`、`ack-batch-size`、`ack-flush-interval-millis` 等）。
 - `whisper-console.*`：控制台参数，见 `WhisperMQ-console/src/main/resources/application.properties`
   （`maven-command`、`repo-root`、`max-recent-messages`）。
 - 控制台默认数据目录为 `./WhisperMQ-console-data`，与仓库根目录的历史演示数据隔离。
