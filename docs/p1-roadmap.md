@@ -201,3 +201,16 @@ Stage E  多 Broker
 - 极端场景（队列容量=1、慢消费）下靠暂停/恢复与超时重投收敛，吞吐会下降。
 
 后续按 §1 推进：D 剩余 TLS → E（多 Broker）。
+
+## 7. P0 单机稳态（2026-10 追加）
+
+目标：不做集群，把单机版的“崩溃可恢复、磁盘可控、停机可优雅”补齐。
+
+- [x] 可配置刷盘：`flush-mode=ASYNC/INTERVAL/SYNC`，`store-flush-interval-millis`；
+- [x] 崩溃恢复：启动截断半条消息、补齐/重建索引尾部；
+- [x] 写失败只读：磁盘满/IO 错误后拒绝新写入，`/api/health` 降级；
+- [x] 优雅停机：等待在途消息（`shutdown-drain-millis`），关闭前 force；
+- [x] 日志降噪：消息级 INFO → DEBUG；
+- [x] fastjson 1.2.76 → fastjson2 2.0.36（消除旧版反序列化风险）；
+- [ ] 磁盘满的故障注入测试（需要可控制的文件系统）；
+- [ ] 刷盘模式的吞吐/延迟对比基准（SYNC vs INTERVAL vs ASYNC）。

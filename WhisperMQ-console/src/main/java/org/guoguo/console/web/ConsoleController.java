@@ -54,7 +54,7 @@ public class ConsoleController {
 
     @GetMapping("/health")
     public Map<String, Object> health() {
-        return Map.of("ok", true);
+        return console.health();
     }
 
     @GetMapping("/overview")

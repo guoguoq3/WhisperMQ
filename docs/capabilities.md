@@ -60,11 +60,11 @@ WhisperMQ 是一个**单机、轻量、可嵌入**的 Java 消息队列：Netty 
 
 | 指标 | 结果 |
 |---|---|
-| 生产者吞吐 | **≈ 2 370 条/秒** |
+| 生产者吞吐 | **≈ 2 540 条/秒** |
 | `send()` 平均延迟 | **0.417 ms** |
-| `send()` P50 | **0.372 ms** |
-| `send()` P99 | **1.190 ms** |
-| 端到端消费吞吐 | **≈ 2 360 条/秒** |
+| `send()` P50 | **0.354 ms** |
+| `send()` P99 | **0.960 ms** |
+| 端到端消费吞吐 | **≈ 2 539 条/秒** |
 | 控制台 HTTP 批量发送 | ≈ 700 条/秒（含 REST/JSON 开销，仅演示用） |
 
 复现命令：
@@ -77,7 +77,8 @@ mvn -o -pl WhisperMQ-consumer -am test -Dtest=BenchmarkIT -DfailIfNoTests=false
 
 - 这是**单连接、同步确认**的吞吐：每条消息都要等 Broker 落盘（页缓存）+ 回执，因此吞吐受 RTT 限制；
   多连接/多生产者可近似线性叠加，但单 Broker 仍受磁盘与单线程段写入约束。
-- 未开启 `fsync`：消息写入页缓存即返回，**进程崩溃可恢复，机器断电可能丢最近数据**。
+- 默认 `flush-mode=ASYNC`：消息写入页缓存即返回，**进程崩溃可恢复，机器断电可能丢最近数据**；
+  切换 `INTERVAL`（默认 1s force）或 `SYNC`（每条 force）可缩短/消除该窗口，代价是吞吐下降。
 - 消费者处理耗时包含在端到端吞吐里；业务越慢，吞吐越低（背压会介入）。
 - 分区/多消费者可提升并行度；单分区仍是单 owner 串行。
 - 结论：**单机每秒数千条**是舒适区；上万条需要更大批量、异步发送或换存储引擎。
@@ -267,6 +268,9 @@ consumer.groupSubscribe(subscribe, (message, messageId) -> {
 | 配置 | 默认 | 说明 |
 |---|---|---|
 | `whisper-mq.max-file-size` | 10MB | segment 滚动大小 |
+| `whisper-mq.flush-mode` | ASYNC | 刷盘模式：ASYNC / INTERVAL / SYNC |
+| `whisper-mq.store-flush-interval-millis` | 1000 | INTERVAL 模式的 force 间隔 |
+| `whisper-mq.shutdown-drain-millis` | 3000 | 优雅停机等待在途消息的时间 |
 | `whisper-mq.hot-cache-size` | 1000 | 内存热消息条数（0=不缓存消息体） |
 | `whisper-mq.retention-millis` | 0 | 保留时长，0=不清理 |
 | `whisper-mq.retention-max-bytes` | 0 | 容量上限，0=不限 |
@@ -344,6 +348,9 @@ Spring Boot 可用 `--whisper-mq.xxx=yyy` 覆盖；控制台配置文件在
 ```
 
 - 启动只加载**索引**；消息体按需读 segment；内存只保留热数据。
+- **崩溃恢复**：启动时截断未写完的尾部消息、补齐落后/损坏的索引；写失败（磁盘满/IO 错误）
+  会进入只读模式，`/api/health` 返回 `ok=false`，避免带着坏盘继续接收写入。
+- **刷盘**：`ASYNC`（默认）/`INTERVAL`/`SYNC`；segment 滚动与进程退出前都会 force。
 - 旧版本的单文件日志可直接作为 segment 读取，首次启动自动建索引。
 - 死信状态：墓碑 + 原文件状态位改写，重启后仍然跳过。
 - 保留策略按整段删除，当前段不删；默认关闭，需显式配置。
@@ -354,7 +361,7 @@ Spring Boot 可用 `--whisper-mq.xxx=yyy` 覆盖；控制台配置文件在
 ## 10. 测试
 
 ```bash
-# 单元测试（56 个）
+# 单元测试（59 个）
 mvn -o test
 
 # 端到端集成（11 个场景，自建 Broker）

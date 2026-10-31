@@ -95,6 +95,14 @@ public class MqConfigProperties {
     /** 共享鉴权 token */
     private String authToken = "";
 
+    //存储可靠性（P0：刷盘与停机）
+    /** 刷盘模式：ASYNC（只写页缓存）/ INTERVAL（定时 force）/ SYNC（每条 force） */
+    private String flushMode = "ASYNC";
+    /** INTERVAL 模式的刷盘间隔（毫秒） */
+    private long storeFlushIntervalMillis = 1000;
+    /** 优雅停机时等待在途消息的最长时间（毫秒） */
+    private long shutdownDrainMillis = 3000;
+
     //消费端业务线程池 / 控制请求确认（P1）
     /** 消费者业务线程数（0 = 按 CPU 核数自动，默认：0） */
     private int consumerWorkerThreads = 0;

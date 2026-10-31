@@ -383,7 +383,7 @@ public class ConsumerGroupManager {
             consumerGroup.putOffset(topic, partition, messageId);
             // 位点持久化：内部是单线程有序队列（旧实现用 commonPool 异步写，顺序不可控）
             offsetPersistUtil.writeMessage(groupId, topic, partition, messageId);
-            log.info("WhisperMQ Broker 更新组{}的主题{}分区{}消费位点至消息{}",
+            log.debug("WhisperMQ Broker 更新组{}的主题{}分区{}消费位点至消息{}",
                     groupId, topic, partition, messageId);
         }
     }

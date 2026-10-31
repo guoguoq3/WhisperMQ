@@ -5,11 +5,15 @@ import org.guoguo.common.pojo.Entity.MqMessage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -147,5 +151,79 @@ class SegmentMessageStoreTest {
         } finally {
             store.close();
         }
+    }
+
+    @Test
+    void indexTailIsRepairedWhenIndexLagsBehindLog() throws Exception {
+        SegmentMessageStore store = new SegmentMessageStore(config());
+        store.init();
+        store.append("1", message("T", "p1"));
+        store.append("2", message("T", "p2"));
+        store.append("3", message("T", "p3"));
+        store.close();
+
+        Path log = onlyLog();
+        Path idx = idxOf(log);
+        List<String> lines = Files.readAllLines(idx);
+        assertTrue(lines.size() >= 2);
+        // 模拟“消息已写、索引没来得及写”的崩溃
+        Files.write(idx, lines.subList(0, lines.size() - 1));
+
+        SegmentMessageStore reopened = new SegmentMessageStore(config());
+        reopened.init();
+        try {
+            assertEquals("p3", reopened.get("3").getPayload());
+            assertEquals(3, reopened.liveCount());
+        } finally {
+            reopened.close();
+        }
+    }
+
+    @Test
+    void partialTailIsTruncatedOnRestart() throws Exception {
+        SegmentMessageStore store = new SegmentMessageStore(config());
+        store.init();
+        store.append("1", message("T", "p1"));
+        store.append("2", message("T", "p2"));
+        store.close();
+
+        Path log = onlyLog();
+        // 模拟写到一半崩溃：最后一行没有换行符
+        Files.writeString(log, "999|{\"topic\":\"T\",\"payload\":\"partial\"}", StandardCharsets.UTF_8,
+                StandardOpenOption.APPEND);
+
+        SegmentMessageStore reopened = new SegmentMessageStore(config());
+        reopened.init();
+        try {
+            assertEquals(2, reopened.liveCount());
+            assertNull(reopened.get("999"));
+            assertEquals("p2", reopened.get("2").getPayload());
+        } finally {
+            reopened.close();
+        }
+    }
+
+    @Test
+    void flushModeIsExposedInStats() {
+        MqConfigProperties config = config();
+        config.setFlushMode("SYNC");
+        SegmentMessageStore store = new SegmentMessageStore(config);
+        store.init();
+        try {
+            assertEquals("SYNC", store.stats().get("flushMode"));
+            assertEquals(false, store.stats().get("readOnly"));
+        } finally {
+            store.close();
+        }
+    }
+
+    private Path onlyLog() throws Exception {
+        try (var files = Files.list(temp.resolve("messages"))) {
+            return files.filter(path -> path.toString().endsWith(".log")).findFirst().orElseThrow();
+        }
+    }
+
+    private Path idxOf(Path log) {
+        return log.resolveSibling(log.getFileName().toString().replace(".log", ".idx"));
     }
 }

@@ -1,6 +1,6 @@
 package org.guoguo.broker.core;
 
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import io.netty.channel.Channel;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -189,7 +189,8 @@ public class BrokerManager {
         return pausedConsumers.size();
     }
 
-    private void cacheMessage(String messageId, MqMessage message) {        messageMap.put(messageId, message);
+    private void cacheMessage(String messageId, MqMessage message) {
+        messageMap.put(messageId, message);
         hotOrder.add(messageId);
         int limit = Math.max(0, config.getHotCacheSize());
         while (messageMap.size() > limit) {
@@ -246,6 +247,20 @@ public class BrokerManager {
 
     @PreDestroy
     public void destroy() {
+        // 优雅停机：给在途消息一点时间完成 ACK，再停止超时扫描
+        long drainMillis = Math.max(0, config.getShutdownDrainMillis());
+        long deadline = System.currentTimeMillis() + drainMillis;
+        while (!inFlightMap.isEmpty() && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        if (!inFlightMap.isEmpty()) {
+            log.warn("WhisperMQ Broker 停机时仍有 {} 条在途消息，将在下次启动后按位点重投", inFlightMap.size());
+        }
         redeliveryScheduler.shutdownNow();
     }
 
@@ -259,19 +274,17 @@ public class BrokerManager {
                 messageId, mqMessage.getPartition());
         mqMessage.setPartition(partition);
 
-        cacheMessage(messageId, mqMessage);
-        //默认为true，即进行持久化
+        //持久化必须发生在缓存/推送之前：磁盘失败时直接拒绝，不产生“内存有、磁盘没有”的幽灵消息
         if (mqMessage.isEnduring() && !retry) {
-            //持久化
-            log.info("WhisperMQ Broker 存储消息：ID={}，主题={}，分区={}", messageId, mqMessage.getTopic(), partition);
-            //核心持久化时机是在 Broker 接收到生产者的消息后、尚未发送给消费者之前完成存储
+            log.debug("WhisperMQ Broker 存储消息：ID={}，主题={}，分区={}", messageId, mqMessage.getTopic(), partition);
             messageStore.append(messageId, mqMessage);
         }
+        cacheMessage(messageId, mqMessage);
         //将生产者生产的消息推送给订阅者
         String topic = mqMessage.getTopic();
         Map<String, ConsumerGroup> subscribeGroups = groupManager.getGroupsByTopic(topic);
         if (subscribeGroups.isEmpty()) {
-            log.info("WhisperMQ Broker 无消费者组订阅主题{}，消息{}暂不推送", topic, messageId);
+            log.debug("WhisperMQ Broker 无消费者组订阅主题{}，消息{}暂不推送", topic, messageId);
             return;
         }
         for (ConsumerGroup group : subscribeGroups.values()) {
@@ -353,7 +366,7 @@ public class BrokerManager {
             inFlightMap.put(inFlightKey(group.getGroupId(), messageId),
                     new InFlightMessage(group.getGroupId(), message.getTopic(), message.getPartition(),
                             messageId, message, targetConsumerId, attempts, System.currentTimeMillis()));
-            log.info("WhisperMQ Broker 向组{}的消费者{}推送消息{}（分区{}，第{}次投递）",
+            log.debug("WhisperMQ Broker 向组{}的消费者{}推送消息{}（分区{}，第{}次投递）",
                     group.getGroupId(), targetConsumerId, messageId, message.getPartition(), attempts);
             return true;
         } catch (Exception e) {
@@ -555,7 +568,7 @@ public class BrokerManager {
         int partition = ackReq.getPartition() != null ? ackReq.getPartition()
                 : (record != null ? record.getPartition() : message.getPartition());
         groupManager.updateGroupOffset(groupId, topic, partition, messageId);
-        log.info("WhisperMQ Broker 收到消费者{}的ACK：消息{}（分区{}），状态{}",
+        log.debug("WhisperMQ Broker 收到消费者{}的ACK：消息{}（分区{}），状态{}",
                 consumerId, messageId, partition, ackStatus);
     }
 

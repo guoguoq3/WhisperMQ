@@ -1,6 +1,6 @@
 package org.guoguo.broker.store;
 
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -95,6 +95,10 @@ public class SegmentMessageStore {
     private long totalBytes;
     private int liveCount;
     private ScheduledExecutorService retentionScheduler;
+    private ScheduledExecutorService flushScheduler;
+    /** 写失败（磁盘满/IO 错误）后进入只读模式，拒绝新写入 */
+    private volatile boolean readOnly;
+    private volatile String lastError;
 
     public SegmentMessageStore(MqConfigProperties config) {
         this.config = config;
@@ -127,8 +131,9 @@ public class SegmentMessageStore {
                 }
             }
             scheduleRetention();
-            log.info("消息存储初始化完成：目录={}，segment={}，消息={}，存活={}，字节={}",
-                    dir, segmentIds.size(), byId.size(), liveCount, totalBytes);
+            scheduleFlush();
+            log.info("消息存储初始化完成：目录={}，segment={}，消息={}，存活={}，字节={}，刷盘模式={}",
+                    dir, segmentIds.size(), byId.size(), liveCount, totalBytes, flushMode());
         } catch (Exception e) {
             throw new IllegalStateException("消息存储初始化失败：" + dir, e);
         }
@@ -139,7 +144,12 @@ public class SegmentMessageStore {
         if (retentionScheduler != null) {
             retentionScheduler.shutdownNow();
         }
+        if (flushScheduler != null) {
+            flushScheduler.shutdownNow();
+        }
         synchronized (lock) {
+            // 关闭前强制落盘，保证已确认消息在进程退出后仍可恢复
+            forceLocked();
             closeQuietly(writer);
             closeQuietly(indexWriter);
             writer = null;
@@ -155,6 +165,9 @@ public class SegmentMessageStore {
     public void append(String messageId, MqMessage message) {
         if (messageId == null || message == null) {
             return;
+        }
+        if (readOnly) {
+            throw new IllegalStateException("Broker 处于只读模式，拒绝写入：" + lastError);
         }
         byte[] body = (messageId + "|" + JSON.toJSONString(message) + "|0\n")
                 .getBytes(StandardCharsets.UTF_8);
@@ -180,8 +193,14 @@ public class SegmentMessageStore {
                         offset, body.length, false);
                 addEntry(entry);
                 totalBytes += body.length + idx.length;
+                if ("SYNC".equals(flushMode())) {
+                    forceLocked();
+                }
             } catch (IOException e) {
-                throw new IllegalStateException("消息写入失败：" + messageId, e);
+                readOnly = true;
+                lastError = "写入失败：" + e.getMessage();
+                log.error("消息写入失败，Broker 进入只读模式：{}", messageId, e);
+                throw new IllegalStateException("消息写入失败，Broker 已进入只读模式：" + messageId, e);
             }
         }
     }
@@ -314,6 +333,9 @@ public class SegmentMessageStore {
             stats.put("currentSegment", currentSegment);
             stats.put("retentionMillis", config.getRetentionMillis());
             stats.put("retentionMaxBytes", config.getRetentionMaxBytes());
+            stats.put("flushMode", flushMode());
+            stats.put("readOnly", readOnly);
+            stats.put("lastError", lastError);
             return stats;
         }
     }
@@ -351,9 +373,8 @@ public class SegmentMessageStore {
         String segment = logFile.getFileName().toString();
         Path idxFile = dir.resolve(segment.substring(0, segment.length() - LOG_SUFFIX.length()) + IDX_SUFFIX);
         try {
-            if (!Files.exists(idxFile)) {
-                buildIndex(logFile, idxFile);
-            }
+            // 崩溃恢复：截断未写完的尾部，并补齐索引落后于日志的部分
+            prepareSegment(logFile, idxFile);
             segmentIds.put(segment, new HashSet<>());
             segmentCreated.put(segment, parseCreatedAt(segment));
             totalBytes += Files.size(logFile) + Files.size(idxFile);
@@ -408,6 +429,160 @@ public class SegmentMessageStore {
         }
     }
 
+    /**
+     * 崩溃恢复：
+     * 1) 若日志尾部有半条消息（没有换行），截断它（该消息未确认，客户端会重试）；
+     * 2) 索引缺失/损坏/落后时，重建或补齐索引。
+     */
+    private void prepareSegment(Path logFile, Path idxFile) throws IOException {
+        long validSize = truncateIncompleteTail(logFile);
+        if (!Files.exists(idxFile)) {
+            buildIndex(logFile, idxFile);
+            return;
+        }
+        long indexedEnd = indexEnd(idxFile);
+        if (indexedEnd < 0 || indexedEnd > validSize || (indexedEnd == 0 && validSize > 0)) {
+            log.warn("索引与日志不一致，重建索引：{}", idxFile.getFileName());
+            Files.deleteIfExists(idxFile);
+            buildIndex(logFile, idxFile);
+        } else if (indexedEnd < validSize) {
+            log.warn("索引落后于日志，补齐尾部索引：{}（{} -> {}）",
+                    idxFile.getFileName(), indexedEnd, validSize);
+            appendIndexTail(logFile, idxFile, indexedEnd);
+        }
+    }
+
+    /** 日志最后一行没有换行符时，视为崩溃导致的半条消息并截断 */
+    private long truncateIncompleteTail(Path logFile) throws IOException {
+        long size = Files.size(logFile);
+        if (size == 0) {
+            return 0;
+        }
+        try (RandomAccessFile raf = new RandomAccessFile(logFile.toFile(), "rw")) {
+            raf.seek(size - 1);
+            if (raf.read() == '\n') {
+                return size;
+            }
+            long pos = size - 1;
+            while (pos >= 0) {
+                raf.seek(pos);
+                if (raf.read() == '\n') {
+                    break;
+                }
+                pos--;
+            }
+            long newSize = pos + 1;
+            raf.setLength(newSize);
+            log.warn("检测到未写完的消息尾部，已截断：{}，{} -> {} 字节",
+                    logFile.getFileName(), size, newSize);
+            return newSize;
+        }
+    }
+
+    /** 返回索引中最大的 offset+length；索引损坏返回 -1 */
+    private long indexEnd(Path idxFile) {
+        long maxEnd = 0;
+        try (var reader = Files.newBufferedReader(idxFile, StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isBlank()) {
+                    continue;
+                }
+                String[] parts = line.split("\\|", 4);
+                if (parts.length < 4) {
+                    return -1;
+                }
+                long offset = Long.parseLong(parts[1]);
+                int length = Integer.parseInt(parts[2]);
+                maxEnd = Math.max(maxEnd, offset + length);
+            }
+            return maxEnd;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    /** 从日志的 startOffset 开始，把缺失的索引行补到 .idx 末尾 */
+    private void appendIndexTail(Path logFile, Path idxFile, long startOffset) throws IOException {
+        byte[] data = Files.readAllBytes(logFile);
+        int start = (int) Math.min(Math.max(0, startOffset), data.length);
+        try (var out = Files.newBufferedWriter(idxFile, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+            int lineStart = start;
+            for (int i = start; i <= data.length; i++) {
+                if (i == data.length || data[i] == '\n') {
+                    if (i > lineStart) {
+                        String line = new String(data, lineStart, i - lineStart, StandardCharsets.UTF_8);
+                        int first = line.indexOf('|');
+                        int last = line.lastIndexOf('|');
+                        if (first > 0 && last > first) {
+                            try {
+                                MqMessage message = JSON.parseObject(line.substring(first + 1, last), MqMessage.class);
+                                int length = i - lineStart + (i < data.length ? 1 : 0);
+                                out.write(line.substring(0, first) + "|" + lineStart + "|" + length + "|"
+                                        + encodeTopic(message == null ? null : message.getTopic()) + "\n");
+                            } catch (Exception e) {
+                                log.warn("补齐索引时跳过无法解析的行（offset={}）", lineStart);
+                            }
+                        }
+                    }
+                    lineStart = i + 1;
+                }
+            }
+        }
+    }
+
+    /** 按配置定时/手动 force */
+    public void force() {
+        synchronized (lock) {
+            forceLocked();
+        }
+    }
+
+    private void forceLocked() {
+        try {
+            if (writer != null) {
+                writer.getChannel().force(false);
+            }
+            if (indexWriter != null) {
+                indexWriter.getChannel().force(false);
+            }
+        } catch (IOException e) {
+            lastError = "force 失败：" + e.getMessage();
+            log.error("刷盘失败", e);
+        }
+    }
+
+    private void scheduleFlush() {
+        if (!"INTERVAL".equals(flushMode())) {
+            return;
+        }
+        long interval = Math.max(100, config.getStoreFlushIntervalMillis());
+        flushScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r, "mq-flush");
+            thread.setDaemon(true);
+            return thread;
+        });
+        flushScheduler.scheduleAtFixedRate(this::force, interval, interval, TimeUnit.MILLISECONDS);
+        log.info("刷盘模式=INTERVAL，每 {}ms force 一次", interval);
+    }
+
+    private String flushMode() {
+        String mode = config.getFlushMode() == null ? "ASYNC" : config.getFlushMode().trim().toUpperCase();
+        return switch (mode) {
+            case "SYNC", "INTERVAL" -> mode;
+            default -> "ASYNC";
+        };
+    }
+
+    public boolean isReadOnly() {
+        return readOnly;
+    }
+
+    public String getLastError() {
+        return lastError;
+    }
+
     private void openWriter(String segment) throws IOException {
         Path logPath = dir.resolve(segment);
         Path idx = dir.resolve(segment.substring(0, segment.length() - LOG_SUFFIX.length()) + IDX_SUFFIX);
@@ -419,6 +594,7 @@ public class SegmentMessageStore {
     }
 
     private void rollLocked() throws IOException {
+        forceLocked();
         closeQuietly(writer);
         closeQuietly(indexWriter);
         String base = LOG_PREFIX + System.currentTimeMillis();

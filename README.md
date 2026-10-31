@@ -85,17 +85,17 @@ java -jar WhisperMQ-console/target/WhisperMQ-console-1.0-SNAPSHOT.jar
 
 | 指标 | 结果 |
 |---|---|
-| 生产者吞吐 | ≈ 2 370 条/秒 |
-| `send` P50 / P99 | 0.372 ms / 1.190 ms |
-| 端到端消费吞吐 | ≈ 2 360 条/秒 |
+| 生产者吞吐 | ≈ 2 540 条/秒 |
+| `send` P50 / P99 | 0.354 ms / 0.960 ms |
+| 端到端消费吞吐 | ≈ 2 539 条/秒 |
 
 复现：`mvn -o -pl WhisperMQ-consumer -am test -Dtest=BenchmarkIT -DfailIfNoTests=false`。
-未开启 fsync，进程崩溃可恢复、机器断电可能丢最近数据；详见能力文档。
+默认 ASYNC（页缓存）；可切换 `flush-mode=INTERVAL/SYNC` 控制断电丢失窗口；详见能力文档。
 
 ## 测试
 
 ```bash
-# 单元测试（56 个）
+# 单元测试（59 个）
 mvn -o test
 
 # 端到端集成测试（11 个场景，自己拉起一个 Broker，监听 19999）
@@ -108,7 +108,8 @@ mvn -o -pl WhisperMQ-consumer -am test -Dtest=SmokeIT -DfailIfNoTests=false
   （`ack-timeout-millis`、`max-delivery-attempts`、`max-dead-letter-retry-count`、
   `heartbeat-interval-millis`、`reconnect-*-millis`、`subscribe-timeout-millis`、
   `default-partitions`、`hot-cache-size`、`retention-millis`、`retention-max-bytes`、
-  `max-file-size`、`backpressure-*`、`dedup-*`、`auth-*` 等）。
+  `max-file-size`、`flush-mode`、`store-flush-interval-millis`、`shutdown-drain-millis`、
+  `backpressure-*`、`dedup-*`、`auth-*` 等）。
 - `whisper-console.*`：控制台参数，见 `WhisperMQ-console/src/main/resources/application.properties`
   （`maven-command`、`repo-root`、`max-recent-messages`）。
 - 控制台默认数据目录为 `./WhisperMQ-console-data`，与仓库根目录的历史演示数据隔离。

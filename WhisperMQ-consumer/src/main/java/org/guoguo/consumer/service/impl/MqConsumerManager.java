@@ -1,6 +1,6 @@
 package org.guoguo.consumer.service.impl;
 
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import lombok.extern.slf4j.Slf4j;
 import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.constant.DeadType;
@@ -344,7 +344,7 @@ public class MqConsumerManager extends MqConsumer {
         ackReq.setPartition(Math.max(0, partition));
 
         sendFrame(buildRpc(MethodType.C_ACK_MSG, ackReq));
-        log.info("WhisperMQ 消费者向组{}发送ACK：消息{}（分区{}），状态{}",
+        log.debug("WhisperMQ 消费者向组{}发送ACK：消息{}（分区{}），状态{}",
                 currentGroupId, messageId, partition, ackStatus);
     }
 

@@ -1,6 +1,6 @@
 package org.guoguo.console.service;
 
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -207,6 +207,18 @@ public class ConsoleService {
     }
 
     // ------------------------------------------------------------------ 观测
+
+    /** 健康检查：存储写失败进入只读时返回 ok=false */
+    public Map<String, Object> health() {
+        Map<String, Object> store = brokerManager.getStoreStats();
+        boolean readOnly = Boolean.TRUE.equals(store.get("readOnly"));
+        Map<String, Object> health = new LinkedHashMap<>();
+        health.put("ok", !readOnly);
+        health.put("readOnly", readOnly);
+        health.put("lastError", store.get("lastError"));
+        health.put("store", store);
+        return health;
+    }
 
     public Map<String, Object> overview() {
         Map<String, Object> root = new LinkedHashMap<>();

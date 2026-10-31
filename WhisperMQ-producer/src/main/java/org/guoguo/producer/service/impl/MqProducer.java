@@ -1,7 +1,7 @@
 // org.guoguo.producer.service.impl.MqProducer.java
 package org.guoguo.producer.service.impl;
 
-import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson2.JSON;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
