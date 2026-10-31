@@ -138,12 +138,24 @@ public class ConsoleService {
         long start = System.currentTimeMillis();
         int success = 0;
         String error = null;
-        for (int i = 0; i < count; i++) {
-            Map<String, Object> result = send(topic, tag, i + "-" + padding, true, "batch-" + i);
-            if (Boolean.TRUE.equals(result.get("ok"))) {
-                success++;
+        int batchSize = Math.max(1, Math.min(config.getMaxBatchSize(), 1000));
+        for (int offset = 0; offset < count; offset += batchSize) {
+            int chunkSize = Math.min(batchSize, count - offset);
+            java.util.List<MqMessageEnduring> messages = new java.util.ArrayList<>(chunkSize);
+            for (int i = 0; i < chunkSize; i++) {
+                MqMessageEnduring message = new MqMessageEnduring();
+                message.setTopic(topic);
+                message.setTag(tag == null || tag.isBlank() ? null : tag.trim());
+                message.setPayload((offset + i) + "-" + padding);
+                message.setBizKey("batch-" + (offset + i));
+                message.setEnduring(true);
+                messages.add(message);
+            }
+            org.guoguo.producer.pojo.Result<String> result = producer.sendBatch(messages);
+            if (result.getCode() != null && result.getCode() == 200) {
+                success += chunkSize;
             } else {
-                error = String.valueOf(result.get("error"));
+                error = result.getMessage();
                 break;
             }
         }

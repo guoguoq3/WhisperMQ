@@ -214,3 +214,11 @@ Stage E  多 Broker
 - [x] fastjson 1.2.76 → fastjson2 2.0.36（消除旧版反序列化风险）；
 - [x] 磁盘满/写失败的故障注入测试（可覆写 `writeBody` 模拟 IOException）；
 - [x] 刷盘模式对比基准（`FlushModeBenchmarkIT`：ASYNC/INTERVAL/SYNC）。
+
+## 8. P1 容量与吞吐（进行中）
+
+- [x] 批量生产：`P_SEND_BATCH` + `BatchProducerMessageDTO` + `sendBatch()`；
+      100 条/批约 10 345 msg/s（单条约 1 468 msg/s，约 7×）
+- [x] 回溯流式化：按 500 条/批读取索引，避免大 topic 一次性快照
+- [ ] 索引下盘/稀疏化（当前索引仍常驻内存）
+- [ ] 批量 ACK（消费端按批确认，减少 RPC）

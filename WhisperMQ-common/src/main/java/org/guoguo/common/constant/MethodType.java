@@ -3,6 +3,8 @@ package org.guoguo.common.constant;
 public class MethodType {
     /** 生产者发送消息 */
     public static final String P_SEND_MSG = "P_SEND_MSG";
+    /** 生产者批量发送消息（P1） */
+    public static final String P_SEND_BATCH = "P_SEND_BATCH";
 //    /** 消费者订阅 */
 //    public static final String C_SUBSCRIBE = "C_SUBSCRIBE";
     // 新增：Broker向消费者推送消息

@@ -18,6 +18,7 @@ WhisperMQ 是一个**单机、轻量、可嵌入**的 Java 消息队列：Netty 
 | Topic / Tag | Tag 支持 `*`、`A,B`，且是**消费者级**配置（同组可订阅不同 Tag） |
 | 消费组 | 同组共享位点；不同组各自收到全量消息 |
 | 投递语义 | **at-least-once**：ACK_SUCCESS 才推进位点；超时/失败/掉线重投 |
+| 批量生产 | `P_SEND_BATCH`：一条 RPC 多条消息，100 条/批实测约 10k msg/s |
 | ACK 模式 | 监听器返回 `true/false`；也可 `reject()` 直接走死信重试链路 |
 | 死信队列 | 投递次数耗尽或业务拒绝后入 DLQ，控制台/协议可重放 |
 | 持久化 | segment（`.log`）+ 索引（`.idx`），重启恢复；非持久化消息只走内存 |
@@ -65,6 +66,7 @@ WhisperMQ 是一个**单机、轻量、可嵌入**的 Java 消息队列：Netty 
 | `send()` P50 | **0.354 ms** |
 | `send()` P99 | **0.960 ms** |
 | 端到端消费吞吐 | **≈ 2 539 条/秒** |
+| 批量发送（100 条/批） | **≈ 10 345 条/秒** |
 | 控制台 HTTP 批量发送 | ≈ 700 条/秒（含 REST/JSON 开销，仅演示用） |
 
 复现命令：
@@ -282,6 +284,7 @@ consumer.groupSubscribe(subscribe, (message, messageId) -> {
 | `whisper-mq.flush-mode` | ASYNC | 刷盘模式：ASYNC / INTERVAL / SYNC |
 | `whisper-mq.store-flush-interval-millis` | 1000 | INTERVAL 模式的 force 间隔 |
 | `whisper-mq.shutdown-drain-millis` | 3000 | 优雅停机等待在途消息的时间 |
+| `whisper-mq.max-batch-size` | 1000 | 单次批量发送的最大消息数 |
 | `whisper-mq.hot-cache-size` | 1000 | 内存热消息条数（0=不缓存消息体） |
 | `whisper-mq.retention-millis` | 0 | 保留时长，0=不清理 |
 | `whisper-mq.retention-max-bytes` | 0 | 容量上限，0=不限 |
@@ -375,7 +378,7 @@ Spring Boot 可用 `--whisper-mq.xxx=yyy` 覆盖；控制台配置文件在
 # 单元测试（60 个）
 mvn -o test
 
-# 端到端集成（11 个场景，自建 Broker）
+# 端到端集成（12 个场景，自建 Broker）
 mvn -o -pl WhisperMQ-consumer -am test -Dtest=SmokeIT -DfailIfNoTests=false
 
 # 性能基准（2000 条 256B）

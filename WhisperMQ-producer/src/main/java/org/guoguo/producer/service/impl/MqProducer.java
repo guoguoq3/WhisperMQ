@@ -22,6 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import org.guoguo.common.config.MqConfigProperties;
 import org.guoguo.common.constant.MethodType;
+import org.guoguo.common.pojo.DTO.BatchProducerMessageDTO;
 import org.guoguo.common.pojo.DTO.ProducerMessageDTO;
 import org.guoguo.common.pojo.DTO.RpcMessageDTO;
 import org.guoguo.common.pojo.Entity.MqMessageEnduring;
@@ -232,6 +233,72 @@ public class MqProducer implements IMqProducer {
             traceIdLatchMap.remove(traceId);
             log.error("消息发送异常，消息ID：{}", traceId, e);
             return fail("消息发送失败", traceId);
+        }
+    }
+
+    /**
+     * 批量发送（P1）：一条 RPC 携带多条消息。
+     * 返回的 messageId 是本批次的 traceId；单条消息 ID 由 Broker 生成。
+     */
+    public Result<String> sendBatch(java.util.List<MqMessageEnduring> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return fail("批量消息不能为空", null);
+        }
+        if (messages.size() > Math.max(1, config.getMaxBatchSize())) {
+            return fail("批量消息超过上限：" + config.getMaxBatchSize(), null);
+        }
+        BatchProducerMessageDTO batchDTO = new BatchProducerMessageDTO();
+        batchDTO.setMessages(messages);
+        String traceId = batchDTO.getMessageId();
+
+        Channel currentChannel = this.channel;
+        if (currentChannel == null || !currentChannel.isActive()) {
+            log.warn("生产者批量发送失败：与 Broker 的连接不可用，traceId：{}", traceId);
+            return fail("批量发送失败：Broker 未连接", traceId);
+        }
+
+        RpcMessageDTO rpcMessageDTO = new RpcMessageDTO();
+        rpcMessageDTO.setRequest(true);
+        rpcMessageDTO.setMethodType(MethodType.P_SEND_BATCH);
+        rpcMessageDTO.setToken(config.getAuthToken());
+
+        try {
+            for (long i = 0; i <= config.getProducerRetryCountLimit(); i++) {
+                VersionedLatch latch = new VersionedLatch(1);
+                long currentVersion = latch.getVersion();
+                batchDTO.setCurrentVersion(currentVersion);
+                rpcMessageDTO.setJson(JSON.toJSONString(batchDTO));
+                traceIdLatchMap.put(traceId, latch);
+                traceIdErrorMap.remove(traceId);
+
+                long waitMillis = Math.max(1L,
+                        (long) (Math.max(1, config.getProducerRetryTimeCoefficient()) * Math.pow(2L, i)));
+                currentChannel.writeAndFlush(JSON.toJSONString(rpcMessageDTO) + "\n");
+                log.debug("批量发送等待确认：traceId={}，条数={}，第{}次，等待{}ms",
+                        traceId, messages.size(), i, waitMillis);
+
+                boolean await = latch.await(waitMillis, TimeUnit.MILLISECONDS);
+                String brokerError = traceIdErrorMap.remove(traceId);
+                traceIdLatchMap.remove(traceId);
+
+                if (brokerError != null) {
+                    log.error("Broker 拒绝批量消息，traceId：{}，原因：{}", traceId, brokerError);
+                    return fail("批量发送失败：" + brokerError, traceId);
+                }
+                if (await && latch.getVersion() == currentVersion) {
+                    return Result.ok("批量发送成功", traceId);
+                }
+                log.warn("批量发送第{}次等待超时（{}ms），traceId：{}", i, waitMillis, traceId);
+            }
+            return fail("批量发送超时", traceId);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            traceIdLatchMap.remove(traceId);
+            return fail("批量发送被中断", traceId);
+        } catch (Exception e) {
+            traceIdLatchMap.remove(traceId);
+            log.error("批量发送异常，traceId：{}", traceId, e);
+            return fail("批量发送失败", traceId);
         }
     }
 

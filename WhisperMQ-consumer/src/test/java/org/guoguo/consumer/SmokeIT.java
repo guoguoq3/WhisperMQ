@@ -38,6 +38,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -528,6 +529,41 @@ public class SmokeIT {
             assertEquals(200, result.getCode(), "发送失败：" + result.getMessage());
             partitionOfPayload.put(payload, metadata.partitionOf(topic, bizKey, result.getMessageId(), 0));
         }
+    }
+
+    @Test
+    @Order(12)
+    void batchSendDeliversAllMessages() throws Exception {
+        String topic = "SMOKE_BATCH_TOPIC";
+        String group = "SMOKE_BATCH_GROUP";
+        MqProducer producer = new MqProducer(clientConfig);
+        producer.start();
+        MqConsumerManager consumer = newConsumer(group);
+
+        CountDownLatch latch = new CountDownLatch(100);
+        Set<String> payloads = ConcurrentHashMap.newKeySet();
+        AtomicInteger duplicates = new AtomicInteger();
+        subscribe(consumer, topic, (message, messageId) -> {
+            if (!payloads.add(message.getPayload())) {
+                duplicates.incrementAndGet();
+            }
+            latch.countDown();
+            return true;
+        });
+
+        List<MqMessageEnduring> batch = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            batch.add(message(topic, "batch-" + i));
+        }
+        Result<String> result = producer.sendBatch(batch);
+        assertEquals(200, result.getCode(), "批量发送失败：" + result.getMessage());
+        assertTrue(latch.await(15, TimeUnit.SECONDS), "批量消息未全部消费");
+        Thread.sleep(300);
+
+        assertEquals(100, payloads.size(), "应收到 100 条不同消息");
+        assertEquals(0, duplicates.get(), "同一批消息不应重复消费");
+        producer.close();
+        consumer.close();
     }
 
     /** 供本地排查用：打印临时数据目录 */

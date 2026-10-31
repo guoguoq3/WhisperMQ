@@ -121,6 +121,25 @@ public class MqBrokerHandler extends SimpleChannelInboundHandler<String> {
                     sendSuccessResponse(ctx,traceId,pmsDto.getCurrentVersion());
                     break;
 
+                // 批量发送：一条 RPC 多条消息，逐条生成 ID 并落盘（P1）
+                case MethodType.P_SEND_BATCH:
+                    BatchProducerMessageDTO batchDto = JSON.parseObject(rpcDto.getJson(), BatchProducerMessageDTO.class);
+                    if (batchDto == null || batchDto.getMessages() == null || batchDto.getMessages().isEmpty()) {
+                        sendErrorResponse(ctx, traceId, "批量消息不能为空");
+                        break;
+                    }
+                    if (batchDto.getMessages().size() > Math.max(1, config.getMaxBatchSize())) {
+                        sendErrorResponse(ctx, traceId,
+                                "批量消息超过上限：" + config.getMaxBatchSize());
+                        break;
+                    }
+                    for (MqMessageEnduring batchMessage : batchDto.getMessages()) {
+                        String batchMessageId = String.valueOf(SnowflakeIdGeneratorUtil.getInstance().nextId());
+                        brokerManager.handlerMessage(batchMessage, batchMessageId, false);
+                    }
+                    sendSuccessResponse(ctx, traceId, batchDto.getCurrentVersion());
+                    break;
+
                 //处理消费者订阅消息并告知消费者消息已收到
                 case MethodType.GROUP_SUBSCRIBE:
                     SubscribeReqDTO subscribeReqDTO = JSON.parseObject(rpcDto.getJson(), SubscribeReqDTO.class);

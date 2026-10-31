@@ -88,6 +88,7 @@ java -jar WhisperMQ-console/target/WhisperMQ-console-1.0-SNAPSHOT.jar
 | 生产者吞吐 | ≈ 2 540 条/秒 |
 | `send` P50 / P99 | 0.354 ms / 0.960 ms |
 | 端到端消费吞吐 | ≈ 2 539 条/秒 |
+| 批量发送（100 条/批） | ≈ 10 345 条/秒（约 7× 单条） |
 
 复现：`mvn -o -pl WhisperMQ-consumer -am test -Dtest=BenchmarkIT -DfailIfNoTests=false`。
 默认 ASYNC（页缓存）；`INTERVAL` 约 2 300 条/秒，`SYNC` 约 138 条/秒（本机 fsync 约 7ms），
@@ -99,7 +100,7 @@ java -jar WhisperMQ-console/target/WhisperMQ-console-1.0-SNAPSHOT.jar
 # 单元测试（60 个）
 mvn -o test
 
-# 端到端集成测试（11 个场景，自己拉起一个 Broker，监听 19999）
+# 端到端集成测试（12 个场景，自己拉起一个 Broker，监听 19999）
 mvn -o -pl WhisperMQ-consumer -am test -Dtest=SmokeIT -DfailIfNoTests=false
 ```
 
@@ -114,6 +115,19 @@ mvn -o -pl WhisperMQ-consumer -am test -Dtest=SmokeIT -DfailIfNoTests=false
 - `whisper-console.*`：控制台参数，见 `WhisperMQ-console/src/main/resources/application.properties`
   （`maven-command`、`repo-root`、`max-recent-messages`）。
 - 控制台默认数据目录为 `./WhisperMQ-console-data`，与仓库根目录的历史演示数据隔离。
+
+## 参数调优（按场景，默认值不变）
+
+| 目标 | 配置 | 建议 |
+|---|---|---|
+| 吞吐优先 | `flush-mode=ASYNC` | 默认；断电可能丢最近消息 |
+| 平衡 | `flush-mode=INTERVAL` + `store-flush-interval-millis=1000` | 最多丢一个 force 间隔，吞吐几乎不变 |
+| 不丢已确认 | `flush-mode=SYNC` | 本机约 138 msg/s；吞吐敏感场景需配批量发送 |
+| 大批量写入 | `max-batch-size=1000` + `sendBatch()` | 100 条/批实测约 10k msg/s |
+| 容量控制 | `hot-cache-size`、`retention-millis`、`retention-max-bytes` | 大堆积时降低热缓存、开启保留 |
+| 消费过载 | `consumer-queue-capacity`、`backpressure-*` | 队列满会暂停投递，回落后补投 |
+| 重复消费 | `dedup-enabled`、`dedup-cache-size` | 默认开启，1000 条 LRU |
+| 内网安全 | `auth-enabled=true` + `auth-token` | 默认关闭；TLS 未实现 |
 
 ## P1 升级路线
 

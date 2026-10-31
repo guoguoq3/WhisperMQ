@@ -264,21 +264,33 @@ public class SegmentMessageStore {
 
     /** 按 topic + 起始消息 ID（不含）顺序遍历，供订阅回溯使用 */
     public void forEachTopicAfter(String topic, String afterMessageId, Consumer<StoredMessage> consumer) {
-        List<IndexEntry> snapshot = new ArrayList<>();
-        synchronized (lock) {
-            NavigableMap<Long, IndexEntry> topicIndex = byTopic.get(topic);
-            if (topicIndex != null) {
-                long after = afterMessageId == null ? Long.MIN_VALUE : parseId(afterMessageId);
-                snapshot.addAll(topicIndex.tailMap(after, false).values());
+        long after = afterMessageId == null ? Long.MIN_VALUE : parseId(afterMessageId);
+        final int batchSize = 500;
+        while (true) {
+            // 分批取索引引用，避免大 topic 一次性把整个索引快照进 List
+            List<IndexEntry> chunk = new ArrayList<>(batchSize);
+            synchronized (lock) {
+                NavigableMap<Long, IndexEntry> topicIndex = byTopic.get(topic);
+                if (topicIndex == null) {
+                    return;
+                }
+                var iterator = topicIndex.tailMap(after, false).values().iterator();
+                while (iterator.hasNext() && chunk.size() < batchSize) {
+                    chunk.add(iterator.next());
+                }
             }
-        }
-        for (IndexEntry entry : snapshot) {
-            if (entry.dead) {
-                continue;
+            if (chunk.isEmpty()) {
+                return;
             }
-            MqMessage message = readRecord(entry);
-            if (message != null) {
-                consumer.accept(new StoredMessage(entry.messageId, message, false));
+            for (IndexEntry entry : chunk) {
+                after = parseId(entry.messageId);
+                if (entry.dead) {
+                    continue;
+                }
+                MqMessage message = readRecord(entry);
+                if (message != null) {
+                    consumer.accept(new StoredMessage(entry.messageId, message, false));
+                }
             }
         }
     }

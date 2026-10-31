@@ -102,6 +102,8 @@ public class MqConfigProperties {
     private long storeFlushIntervalMillis = 1000;
     /** 优雅停机时等待在途消息的最长时间（毫秒） */
     private long shutdownDrainMillis = 3000;
+    /** 批量发送单次最大消息数（P1） */
+    private int maxBatchSize = 1000;
 
     //消费端业务线程池 / 控制请求确认（P1）
     /** 消费者业务线程数（0 = 按 CPU 核数自动，默认：0） */
