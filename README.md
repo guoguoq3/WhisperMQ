@@ -90,12 +90,13 @@ java -jar WhisperMQ-console/target/WhisperMQ-console-1.0-SNAPSHOT.jar
 | 端到端消费吞吐 | ≈ 2 539 条/秒 |
 
 复现：`mvn -o -pl WhisperMQ-consumer -am test -Dtest=BenchmarkIT -DfailIfNoTests=false`。
-默认 ASYNC（页缓存）；可切换 `flush-mode=INTERVAL/SYNC` 控制断电丢失窗口；详见能力文档。
+默认 ASYNC（页缓存）；`INTERVAL` 约 2 300 条/秒，`SYNC` 约 138 条/秒（本机 fsync 约 7ms），
+可按“断电丢失窗口 vs 吞吐”选择；详见能力文档。
 
 ## 测试
 
 ```bash
-# 单元测试（59 个）
+# 单元测试（60 个）
 mvn -o test
 
 # 端到端集成测试（11 个场景，自己拉起一个 Broker，监听 19999）

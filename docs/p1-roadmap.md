@@ -212,5 +212,5 @@ Stage E  多 Broker
 - [x] 优雅停机：等待在途消息（`shutdown-drain-millis`），关闭前 force；
 - [x] 日志降噪：消息级 INFO → DEBUG；
 - [x] fastjson 1.2.76 → fastjson2 2.0.36（消除旧版反序列化风险）；
-- [ ] 磁盘满的故障注入测试（需要可控制的文件系统）；
-- [ ] 刷盘模式的吞吐/延迟对比基准（SYNC vs INTERVAL vs ASYNC）。
+- [x] 磁盘满/写失败的故障注入测试（可覆写 `writeBody` 模拟 IOException）；
+- [x] 刷盘模式对比基准（`FlushModeBenchmarkIT`：ASYNC/INTERVAL/SYNC）。

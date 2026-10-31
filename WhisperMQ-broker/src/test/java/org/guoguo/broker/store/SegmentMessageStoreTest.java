@@ -5,6 +5,7 @@ import org.guoguo.common.pojo.Entity.MqMessage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,6 +15,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -225,5 +227,50 @@ class SegmentMessageStoreTest {
 
     private Path idxOf(Path log) {
         return log.resolveSibling(log.getFileName().toString().replace(".log", ".idx"));
+    }
+
+    @Test
+    void writeFailureEntersReadOnlyMode() {
+        FailingStore store = new FailingStore(config());
+        store.init();
+        try {
+            store.append("1", message("T", "ok"));
+            store.failNextWrite();
+
+            IllegalStateException error = assertThrows(IllegalStateException.class,
+                    () -> store.append("2", message("T", "boom")));
+            assertTrue(error.getMessage().contains("只读"));
+            assertTrue(store.isReadOnly());
+            assertTrue(store.getLastError().contains("磁盘已满"));
+            assertEquals(true, store.stats().get("readOnly"));
+
+            // 进入只读后，后续写入直接拒绝，不再尝试 IO
+            assertThrows(IllegalStateException.class,
+                    () -> store.append("3", message("T", "rejected")));
+        } finally {
+            store.close();
+        }
+    }
+
+    /** 测试用：模拟磁盘写入失败 */
+    static class FailingStore extends SegmentMessageStore {
+        private boolean failNext;
+
+        FailingStore(MqConfigProperties config) {
+            super(config);
+        }
+
+        void failNextWrite() {
+            failNext = true;
+        }
+
+        @Override
+        protected void writeBody(long offset, byte[] body) throws IOException {
+            if (failNext) {
+                failNext = false;
+                throw new IOException("模拟磁盘已满");
+            }
+            super.writeBody(offset, body);
+        }
     }
 }

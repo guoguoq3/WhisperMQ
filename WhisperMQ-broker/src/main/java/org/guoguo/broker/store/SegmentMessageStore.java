@@ -180,14 +180,12 @@ public class SegmentMessageStore {
                     rollLocked();
                 }
                 long offset = currentSize;
-                writer.seek(offset);
-                writer.write(body);
+                writeBody(offset, body);
                 currentSize += body.length;
 
                 byte[] idx = (messageId + "|" + offset + "|" + body.length + "|"
                         + encodeTopic(message.getTopic()) + "\n").getBytes(StandardCharsets.UTF_8);
-                indexWriter.seek(indexWriter.length());
-                indexWriter.write(idx);
+                writeIndex(idx);
 
                 IndexEntry entry = new IndexEntry(messageId, message.getTopic(), currentSegment,
                         offset, body.length, false);
@@ -203,6 +201,18 @@ public class SegmentMessageStore {
                 throw new IllegalStateException("消息写入失败，Broker 已进入只读模式：" + messageId, e);
             }
         }
+    }
+
+    /** 测试可覆写：模拟磁盘写入失败 */
+    protected void writeBody(long offset, byte[] body) throws IOException {
+        writer.seek(offset);
+        writer.write(body);
+    }
+
+    /** 测试可覆写：模拟索引写入失败 */
+    protected void writeIndex(byte[] idx) throws IOException {
+        indexWriter.seek(indexWriter.length());
+        indexWriter.write(idx);
     }
 
     /** 标记死信：原地把状态位改成 1，并写墓碑（重启后据此恢复 dead 标记） */
